@@ -346,6 +346,10 @@ func (m *MockBridge) GetAggregatedMemoryMetrics() (*bridge.MemoryMetrics, error)
 	return &bridge.MemoryMetrics{JSHeapUsedMB: 50, JSHeapTotalMB: 100, Nodes: 500}, nil
 }
 
+func (m *MockBridge) GetCrashLogs() []string {
+	return nil
+}
+
 type mockBridgeDisconnected struct {
 	mockBridge
 }

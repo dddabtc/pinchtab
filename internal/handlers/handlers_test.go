@@ -75,6 +75,10 @@ func (m *mockBridge) GetAggregatedMemoryMetrics() (*bridge.MemoryMetrics, error)
 	return &bridge.MemoryMetrics{JSHeapUsedMB: 50, Nodes: 500}, nil
 }
 
+func (m *mockBridge) GetCrashLogs() []string {
+	return nil
+}
+
 func TestHandlers(t *testing.T) {
 	h := New(&mockBridge{}, &config.RuntimeConfig{}, nil, nil, nil)
 	mux := http.NewServeMux()

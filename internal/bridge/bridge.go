@@ -137,6 +137,9 @@ func (b *Bridge) EnsureChrome(cfg *config.RuntimeConfig) error {
 		b.InitActionRegistry()
 	}
 
+	// Start crash monitoring
+	b.MonitorCrashes(nil)
+
 	return nil
 }
 

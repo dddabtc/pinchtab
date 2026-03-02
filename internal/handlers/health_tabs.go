@@ -26,7 +26,15 @@ func (h *Handlers) HandleHealth(w http.ResponseWriter, r *http.Request) {
 		web.JSON(w, 503, map[string]any{"status": "error", "reason": err.Error()})
 		return
 	}
-	web.JSON(w, 200, map[string]any{"status": "ok", "tabs": len(targets), "cdp": h.Config.CdpURL})
+
+	resp := map[string]any{"status": "ok", "tabs": len(targets), "cdp": h.Config.CdpURL}
+
+	// Include crash logs if any
+	if crashLogs := h.Bridge.GetCrashLogs(); len(crashLogs) > 0 {
+		resp["crashLogs"] = crashLogs
+	}
+
+	web.JSON(w, 200, resp)
 }
 
 func (h *Handlers) HandleEnsureChrome(w http.ResponseWriter, r *http.Request) {
