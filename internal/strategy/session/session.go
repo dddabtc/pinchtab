@@ -1,5 +1,18 @@
-// Package session implements the "casual" strategy.
+// Package session implements the "session" allocation strategy.
+//
 // Agents get a session ID; Pinchtab manages instance and tab lifecycle.
+// Sessions provide sticky routing — once a session is bound to an instance,
+// all operations go to that instance until the session expires or is deleted.
+//
+// Key endpoints:
+//
+//	POST /session          — create a new session (allocates instance + tab)
+//	POST /browse           — navigate + snapshot in one call (auto-creates session)
+//	GET  /session/{id}     — get session info
+//	DELETE /session/{id}   — delete session (closes tab)
+//	GET  /sessions         — list all sessions
+//
+// Tab operations use X-Session-ID header for routing. Falls back to tab ID in path.
 package session
 
 import (
@@ -13,32 +26,22 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pinchtab/pinchtab/internal/instance"
 	"github.com/pinchtab/pinchtab/internal/primitive"
-	"github.com/pinchtab/pinchtab/internal/strategy"
 	"github.com/pinchtab/pinchtab/internal/web"
 )
 
-func init() {
-	strategy.MustRegister("session", func() strategy.Strategy {
-		return &Strategy{
-			sessions: make(map[string]*Session),
-		}
-	})
-}
-
 // Config holds session strategy configuration.
 type Config struct {
-	DefaultProfile string        `json:"defaultProfile" yaml:"default_profile"`
-	SessionTTL     time.Duration `json:"sessionTTL" yaml:"session_ttl"`
-	AutoLaunch     bool          `json:"autoLaunch" yaml:"auto_launch"`
+	SessionTTL time.Duration
+	AutoLaunch bool
 }
 
 // DefaultConfig returns sensible defaults.
 func DefaultConfig() Config {
 	return Config{
-		DefaultProfile: "default",
-		SessionTTL:     30 * time.Minute,
-		AutoLaunch:     true,
+		SessionTTL: 30 * time.Minute,
+		AutoLaunch: true,
 	}
 }
 
@@ -47,31 +50,38 @@ type Session struct {
 	ID         string    `json:"id"`
 	TabID      string    `json:"tabId"`
 	InstanceID string    `json:"instanceId"`
+	Port       string    `json:"port"`
 	CreatedAt  time.Time `json:"createdAt"`
 	LastUsed   time.Time `json:"lastUsed"`
 	mu         sync.Mutex
 }
 
-// Strategy manages sessions for casual agents.
+// Strategy manages sessions for agents.
+// Each session is sticky to one instance — allocation happens once at session creation.
 type Strategy struct {
-	p        *primitive.Primitives
-	config   Config
+	mgr    *instance.Manager
+	bridge *instance.BridgeClient
+	config Config
+
 	sessions map[string]*Session
 	mu       sync.RWMutex
 	stopCh   chan struct{}
 }
 
-// Name returns the strategy identifier.
-func (s *Strategy) Name() string {
-	return "session"
+// New creates a Session strategy backed by the given InstanceManager.
+func New(mgr *instance.Manager) *Strategy {
+	return &Strategy{
+		mgr:      mgr,
+		bridge:   instance.NewBridgeClient(),
+		config:   DefaultConfig(),
+		sessions: make(map[string]*Session),
+	}
 }
 
-// Init receives primitives.
-func (s *Strategy) Init(p *primitive.Primitives) error {
-	s.p = p
-	s.config = DefaultConfig()
-	return nil
-}
+func (s *Strategy) Name() string { return "session" }
+
+// Init receives primitives (unused — Session strategy uses instance.Manager directly).
+func (s *Strategy) Init(_ *primitive.Primitives) error { return nil }
 
 // Start begins the session cleanup goroutine.
 func (s *Strategy) Start(ctx context.Context) error {
@@ -88,94 +98,61 @@ func (s *Strategy) Stop() error {
 	return nil
 }
 
-// RegisterRoutes adds session endpoints plus primitive endpoints.
+// RegisterRoutes adds session and tab endpoints to the mux.
 func (s *Strategy) RegisterRoutes(mux *http.ServeMux) {
-	// Session-specific endpoints
+	// Session management.
 	mux.HandleFunc("POST /session", s.handleCreateSession)
 	mux.HandleFunc("GET /session/{id}", s.handleGetSession)
 	mux.HandleFunc("DELETE /session/{id}", s.handleDeleteSession)
 	mux.HandleFunc("GET /sessions", s.handleListSessions)
 
-	// Simplified browsing endpoint
+	// Browse: navigate + snapshot in one call (auto-creates session).
 	mux.HandleFunc("POST /browse", s.handleBrowse)
 
-	// Also expose primitive endpoints for power users
-	// Instances
-	mux.HandleFunc("GET /instances", s.handleListInstances)
-	mux.HandleFunc("POST /instances/launch", s.handleLaunch)
-	mux.HandleFunc("POST /instances/{id}/stop", s.handleStop)
+	// Tab operations (use X-Session-ID header for routing).
+	mux.HandleFunc("POST /navigate", s.handleNavigate)
+	mux.HandleFunc("GET /navigate", s.handleNavigate)
+	mux.HandleFunc("GET /snapshot", s.handleSnapshot)
+	mux.HandleFunc("GET /screenshot", s.handleScreenshot)
+	mux.HandleFunc("GET /text", s.handleText)
+	mux.HandleFunc("POST /action", s.handleAction)
+	mux.HandleFunc("POST /actions", s.handleActions)
+	mux.HandleFunc("POST /evaluate", s.handleEvaluate)
+	mux.HandleFunc("GET /cookies", s.handleGetCookies)
+	mux.HandleFunc("POST /cookies", s.handleSetCookies)
 
-	// Tabs (passthrough to primitives)
+	// Tab-specific endpoints (explicit tab ID in path).
+	mux.HandleFunc("POST /tabs/{id}/navigate", s.handleTabProxy("/navigate"))
+	mux.HandleFunc("GET /tabs/{id}/snapshot", s.handleTabProxy("/snapshot"))
+	mux.HandleFunc("GET /tabs/{id}/screenshot", s.handleTabProxy("/screenshot"))
+	mux.HandleFunc("GET /tabs/{id}/text", s.handleTabProxy("/text"))
+	mux.HandleFunc("POST /tabs/{id}/action", s.handleTabProxy("/action"))
+	mux.HandleFunc("POST /tabs/{id}/actions", s.handleTabProxy("/actions"))
+	mux.HandleFunc("POST /tabs/{id}/evaluate", s.handleTabProxy("/evaluate"))
+	mux.HandleFunc("GET /tabs/{id}/pdf", s.handleTabProxy("/pdf"))
+	mux.HandleFunc("POST /tabs/{id}/pdf", s.handleTabProxy("/pdf"))
+	mux.HandleFunc("GET /tabs/{id}/cookies", s.handleTabProxy("/cookies"))
+	mux.HandleFunc("POST /tabs/{id}/cookies", s.handleTabProxy("/cookies"))
+	mux.HandleFunc("POST /tabs/{id}/close", s.handleTabClose)
+
+	// Tab + instance listing.
+	mux.HandleFunc("POST /tab", s.handleTabManage)
 	mux.HandleFunc("GET /tabs", s.handleListTabs)
-	mux.HandleFunc("POST /tabs/{id}/navigate", s.handleNavigate)
-	mux.HandleFunc("GET /tabs/{id}/snapshot", s.handleSnapshot)
-	mux.HandleFunc("POST /tabs/{id}/action", s.handleAction)
-	mux.HandleFunc("POST /tabs/{id}/actions", s.handleActions)
-	mux.HandleFunc("GET /tabs/{id}/screenshot", s.handleScreenshot)
-	mux.HandleFunc("GET /tabs/{id}/pdf", s.handlePDF)
-	mux.HandleFunc("GET /tabs/{id}/text", s.handleText)
-	mux.HandleFunc("POST /tabs/{id}/evaluate", s.handleEvaluate)
-	mux.HandleFunc("GET /tabs/{id}/cookies", s.handleGetCookies)
-	mux.HandleFunc("POST /tabs/{id}/cookies", s.handleSetCookies)
-	mux.HandleFunc("POST /tabs/{id}/close", s.handleCloseTab)
-
-	// Profiles
-	mux.HandleFunc("GET /profiles", s.handleListProfiles)
-	mux.HandleFunc("POST /profiles", s.handleCreateProfile)
+	mux.HandleFunc("GET /instances", s.handleListInstances)
 }
 
-// Session handlers
+// --- Session management ---
 
 func (s *Strategy) handleCreateSession(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
-	// Ensure instance running
-	inst := s.p.Instances.FirstRunning()
-	if inst == nil {
-		if !s.config.AutoLaunch {
-			web.Error(w, http.StatusServiceUnavailable, fmt.Errorf("no running instance and auto-launch disabled"))
-			return
-		}
-
-		var err error
-		inst, err = s.p.Instances.Launch(ctx, s.config.DefaultProfile, 0, true)
-		if err != nil {
-			web.Error(w, http.StatusInternalServerError, err)
-			return
-		}
-
-		// Wait for instance to be ready
-		if err := s.p.Instances.WaitReady(ctx, inst.ID); err != nil {
-			web.Error(w, http.StatusInternalServerError, err)
-			return
-		}
-	}
-
-	// Open tab
-	tabID, err := s.p.Tabs.Open(ctx, inst.ID, "about:blank")
+	sess, err := s.createSession(r.Context())
 	if err != nil {
-		web.Error(w, http.StatusInternalServerError, err)
+		web.Error(w, http.StatusServiceUnavailable, err)
 		return
 	}
 
-	// Create session
-	sess := &Session{
-		ID:         "sess_" + generateID(8),
-		TabID:      tabID,
-		InstanceID: inst.ID,
-		CreatedAt:  time.Now(),
-		LastUsed:   time.Now(),
-	}
-
-	s.mu.Lock()
-	s.sessions[sess.ID] = sess
-	s.mu.Unlock()
-
-	slog.Info("session created", "sessionId", sess.ID, "tabId", tabID)
-
 	web.JSON(w, http.StatusCreated, map[string]string{
-		"session_id": sess.ID,
-		"tab_id":     sess.TabID,
+		"sessionId": sess.ID,
+		"tabId":     sess.TabID,
 	})
 }
 
@@ -187,7 +164,7 @@ func (s *Strategy) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	s.mu.RUnlock()
 
 	if !ok {
-		web.Error(w, http.StatusNotFound, fmt.Errorf("session not found"))
+		web.Error(w, http.StatusNotFound, fmt.Errorf("session %q not found", id))
 		return
 	}
 
@@ -205,20 +182,21 @@ func (s *Strategy) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 
 	if !ok {
-		web.Error(w, http.StatusNotFound, fmt.Errorf("session not found"))
+		web.Error(w, http.StatusNotFound, fmt.Errorf("session %q not found", id))
 		return
 	}
 
-	// Close the tab
-	if err := s.p.Tabs.Close(r.Context(), sess.TabID); err != nil {
-		slog.Warn("failed to close session tab", "sessionId", id, "tabId", sess.TabID, "err", err)
+	// Close the tab.
+	if err := s.bridge.CloseTab(r.Context(), sess.Port, sess.TabID); err != nil {
+		slog.Warn("failed to close session tab", "session", id, "tab", sess.TabID, "err", err)
 	}
+	s.mgr.InvalidateTab(sess.TabID)
 
-	slog.Info("session deleted", "sessionId", id)
+	slog.Info("session deleted", "session", id)
 	web.JSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
-func (s *Strategy) handleListSessions(w http.ResponseWriter, r *http.Request) {
+func (s *Strategy) handleListSessions(w http.ResponseWriter, _ *http.Request) {
 	s.mu.RLock()
 	sessions := make([]*Session, 0, len(s.sessions))
 	for _, sess := range s.sessions {
@@ -229,323 +207,387 @@ func (s *Strategy) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	web.JSON(w, http.StatusOK, sessions)
 }
 
-// handleBrowse is the simplified browsing endpoint.
-// Auto-allocates a session if needed, navigates, returns snapshot.
+// --- Browse: navigate + snapshot in one call ---
+
 func (s *Strategy) handleBrowse(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	sessionID := r.Header.Get("X-Session-ID")
-
-	var sess *Session
-
-	// Find existing session
-	if sessionID != "" {
-		s.mu.RLock()
-		sess = s.sessions[sessionID]
-		s.mu.RUnlock()
+	var req struct {
+		URL       string `json:"url"`
+		SessionID string `json:"sessionId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		web.Error(w, http.StatusBadRequest, fmt.Errorf("decode: %w", err))
+		return
 	}
 
-	// Create new session if needed
-	if sess == nil {
-		inst := s.p.Instances.FirstRunning()
-		if inst == nil {
-			if !s.config.AutoLaunch {
-				web.Error(w, http.StatusServiceUnavailable, fmt.Errorf("no running instance"))
-				return
-			}
-			var err error
-			inst, err = s.p.Instances.Launch(ctx, s.config.DefaultProfile, 0, true)
-			if err != nil {
-				web.Error(w, http.StatusInternalServerError, err)
-				return
-			}
-			if err := s.p.Instances.WaitReady(ctx, inst.ID); err != nil {
-				web.Error(w, http.StatusInternalServerError, err)
-				return
-			}
-		}
-
-		tabID, err := s.p.Tabs.Open(ctx, inst.ID, "about:blank")
-		if err != nil {
-			web.Error(w, http.StatusInternalServerError, err)
-			return
-		}
-
-		sess = &Session{
-			ID:         "sess_" + generateID(8),
-			TabID:      tabID,
-			InstanceID: inst.ID,
-			CreatedAt:  time.Now(),
-			LastUsed:   time.Now(),
-		}
-
-		s.mu.Lock()
-		s.sessions[sess.ID] = sess
-		s.mu.Unlock()
+	if req.URL == "" {
+		web.Error(w, http.StatusBadRequest, fmt.Errorf("url is required"))
+		return
 	}
 
-	// Update last used
+	// Use existing session from body or header.
+	sessionID := req.SessionID
+	if sessionID == "" {
+		sessionID = r.Header.Get("X-Session-ID")
+	}
+
+	sess, err := s.getOrCreateSession(r.Context(), sessionID)
+	if err != nil {
+		web.Error(w, http.StatusServiceUnavailable, err)
+		return
+	}
+
 	sess.mu.Lock()
 	sess.LastUsed = time.Now()
 	sess.mu.Unlock()
 
-	// Parse request
-	var req struct {
-		URL string `json:"url"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		web.Error(w, http.StatusBadRequest, err)
-		return
-	}
-
-	// Navigate
-	if err := s.p.Tabs.Navigate(ctx, sess.TabID, req.URL, primitive.NavigateOpts{}); err != nil {
-		web.Error(w, http.StatusInternalServerError, err)
-		return
-	}
-
-	// Get snapshot
-	snap, err := s.p.Tabs.Snapshot(ctx, sess.TabID, primitive.SnapshotOpts{
-		Interactive: true,
-		Compact:     true,
-	})
-	if err != nil {
-		web.Error(w, http.StatusInternalServerError, err)
-		return
-	}
-
-	web.JSON(w, http.StatusOK, map[string]any{
-		"session_id": sess.ID,
-		"tab_id":     sess.TabID,
-		"snapshot":   snap,
-	})
+	// Navigate the session's tab.
+	s.bridge.ProxyToTab(w, r, sess.Port, sess.TabID, "/navigate")
 }
 
-// Primitive passthrough handlers
-
-func (s *Strategy) handleListInstances(w http.ResponseWriter, r *http.Request) {
-	web.JSON(w, http.StatusOK, s.p.Instances.List())
-}
-
-func (s *Strategy) handleLaunch(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Profile  string `json:"profile"`
-		Port     int    `json:"port"`
-		Headless *bool  `json:"headless"`
-	}
-	_ = json.NewDecoder(r.Body).Decode(&req) // Allow empty body
-
-	headless := true
-	if req.Headless != nil {
-		headless = *req.Headless
-	}
-
-	inst, err := s.p.Instances.Launch(r.Context(), req.Profile, req.Port, headless)
-	if err != nil {
-		web.Error(w, http.StatusInternalServerError, err)
-		return
-	}
-	web.JSON(w, http.StatusCreated, inst)
-}
-
-func (s *Strategy) handleStop(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if err := s.p.Instances.Stop(r.Context(), id); err != nil {
-		web.Error(w, http.StatusInternalServerError, err)
-		return
-	}
-	web.JSON(w, http.StatusOK, map[string]string{"status": "stopped"})
-}
-
-func (s *Strategy) handleListTabs(w http.ResponseWriter, r *http.Request) {
-	tabs, err := s.p.Tabs.ListAll(r.Context())
-	if err != nil {
-		web.Error(w, http.StatusInternalServerError, err)
-		return
-	}
-	web.JSON(w, http.StatusOK, tabs)
-}
+// --- Shorthand handlers (use X-Session-ID header) ---
 
 func (s *Strategy) handleNavigate(w http.ResponseWriter, r *http.Request) {
-	tabID := r.PathValue("id")
-	var req struct {
-		URL string `json:"url"`
+	var reqURL string
+	if r.Method == http.MethodGet {
+		reqURL = r.URL.Query().Get("url")
+	} else {
+		var req struct {
+			URL string `json:"url"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			web.Error(w, http.StatusBadRequest, fmt.Errorf("decode: %w", err))
+			return
+		}
+		reqURL = req.URL
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		web.Error(w, http.StatusBadRequest, err)
+
+	if reqURL == "" {
+		web.Error(w, http.StatusBadRequest, fmt.Errorf("url is required"))
 		return
 	}
 
-	if err := s.p.Tabs.Navigate(r.Context(), tabID, req.URL, primitive.NavigateOpts{}); err != nil {
-		web.Error(w, http.StatusInternalServerError, err)
+	sess, err := s.getOrCreateSession(r.Context(), r.Header.Get("X-Session-ID"))
+	if err != nil {
+		web.Error(w, http.StatusServiceUnavailable, err)
 		return
 	}
-	web.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
+
+	sess.mu.Lock()
+	sess.LastUsed = time.Now()
+	sess.mu.Unlock()
+
+	// Create a new tab for this navigation.
+	tabID, createErr := s.bridge.CreateTab(r.Context(), sess.Port, reqURL)
+	if createErr != nil {
+		web.Error(w, http.StatusInternalServerError, fmt.Errorf("create tab: %w", createErr))
+		return
+	}
+
+	// Update session's current tab.
+	sess.mu.Lock()
+	oldTab := sess.TabID
+	sess.TabID = tabID
+	sess.mu.Unlock()
+
+	s.mgr.RegisterTab(tabID, sess.InstanceID)
+
+	// Close old tab (best effort).
+	if oldTab != "" && oldTab != tabID {
+		_ = s.bridge.CloseTab(r.Context(), sess.Port, oldTab)
+		s.mgr.InvalidateTab(oldTab)
+	}
+
+	web.JSON(w, http.StatusOK, map[string]string{
+		"sessionId": sess.ID,
+		"tabId":     tabID,
+		"url":       reqURL,
+	})
 }
 
 func (s *Strategy) handleSnapshot(w http.ResponseWriter, r *http.Request) {
-	tabID := r.PathValue("id")
-	q := r.URL.Query()
-
-	opts := primitive.SnapshotOpts{
-		Interactive: q.Get("interactive") == "true",
-		Compact:     q.Get("compact") == "true",
-		Format:      q.Get("format"),
-		Diff:        q.Get("diff") == "true",
-	}
-
-	snap, err := s.p.Tabs.Snapshot(r.Context(), tabID, opts)
+	sess, err := s.sessionFromRequest(r)
 	if err != nil {
-		web.Error(w, http.StatusInternalServerError, err)
-		return
-	}
-	web.JSON(w, http.StatusOK, snap)
-}
-
-func (s *Strategy) handleAction(w http.ResponseWriter, r *http.Request) {
-	tabID := r.PathValue("id")
-	var action primitive.Action
-	if err := json.NewDecoder(r.Body).Decode(&action); err != nil {
 		web.Error(w, http.StatusBadRequest, err)
 		return
 	}
-
-	result, err := s.p.Tabs.Action(r.Context(), tabID, action)
-	if err != nil {
-		web.Error(w, http.StatusInternalServerError, err)
-		return
-	}
-	web.JSON(w, http.StatusOK, result)
-}
-
-func (s *Strategy) handleActions(w http.ResponseWriter, r *http.Request) {
-	tabID := r.PathValue("id")
-	var actions []primitive.Action
-	if err := json.NewDecoder(r.Body).Decode(&actions); err != nil {
-		web.Error(w, http.StatusBadRequest, err)
-		return
-	}
-
-	results, err := s.p.Tabs.Actions(r.Context(), tabID, actions)
-	if err != nil {
-		web.Error(w, http.StatusInternalServerError, err)
-		return
-	}
-	web.JSON(w, http.StatusOK, results)
+	s.touchSession(sess)
+	s.bridge.ProxyToTab(w, r, sess.Port, sess.TabID, "/snapshot")
 }
 
 func (s *Strategy) handleScreenshot(w http.ResponseWriter, r *http.Request) {
-	tabID := r.PathValue("id")
-	data, err := s.p.Tabs.Screenshot(r.Context(), tabID, primitive.ScreenshotOpts{})
+	sess, err := s.sessionFromRequest(r)
 	if err != nil {
-		web.Error(w, http.StatusInternalServerError, err)
+		web.Error(w, http.StatusBadRequest, err)
 		return
 	}
-	w.Header().Set("Content-Type", "image/png")
-	_, _ = w.Write(data)
-}
-
-func (s *Strategy) handlePDF(w http.ResponseWriter, r *http.Request) {
-	tabID := r.PathValue("id")
-	data, err := s.p.Tabs.PDF(r.Context(), tabID, primitive.PDFOpts{})
-	if err != nil {
-		web.Error(w, http.StatusInternalServerError, err)
-		return
-	}
-	w.Header().Set("Content-Type", "application/pdf")
-	_, _ = w.Write(data)
+	s.touchSession(sess)
+	s.bridge.ProxyToTab(w, r, sess.Port, sess.TabID, "/screenshot")
 }
 
 func (s *Strategy) handleText(w http.ResponseWriter, r *http.Request) {
-	tabID := r.PathValue("id")
-	result, err := s.p.Tabs.Text(r.Context(), tabID, primitive.TextOpts{})
+	sess, err := s.sessionFromRequest(r)
 	if err != nil {
-		web.Error(w, http.StatusInternalServerError, err)
+		web.Error(w, http.StatusBadRequest, err)
 		return
 	}
-	web.JSON(w, http.StatusOK, result)
+	s.touchSession(sess)
+	s.bridge.ProxyToTab(w, r, sess.Port, sess.TabID, "/text")
+}
+
+func (s *Strategy) handleAction(w http.ResponseWriter, r *http.Request) {
+	sess, err := s.sessionFromRequest(r)
+	if err != nil {
+		web.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	s.touchSession(sess)
+	s.bridge.ProxyToTab(w, r, sess.Port, sess.TabID, "/action")
+}
+
+func (s *Strategy) handleActions(w http.ResponseWriter, r *http.Request) {
+	sess, err := s.sessionFromRequest(r)
+	if err != nil {
+		web.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	s.touchSession(sess)
+	s.bridge.ProxyToTab(w, r, sess.Port, sess.TabID, "/actions")
 }
 
 func (s *Strategy) handleEvaluate(w http.ResponseWriter, r *http.Request) {
-	tabID := r.PathValue("id")
-	var req struct {
-		Expression string `json:"expression"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	sess, err := s.sessionFromRequest(r)
+	if err != nil {
 		web.Error(w, http.StatusBadRequest, err)
 		return
 	}
-
-	result, err := s.p.Tabs.Evaluate(r.Context(), tabID, req.Expression)
-	if err != nil {
-		web.Error(w, http.StatusInternalServerError, err)
-		return
-	}
-	web.JSON(w, http.StatusOK, map[string]any{"result": result})
+	s.touchSession(sess)
+	s.bridge.ProxyToTab(w, r, sess.Port, sess.TabID, "/evaluate")
 }
 
 func (s *Strategy) handleGetCookies(w http.ResponseWriter, r *http.Request) {
-	tabID := r.PathValue("id")
-	cookies, err := s.p.Tabs.Cookies(r.Context(), tabID)
+	sess, err := s.sessionFromRequest(r)
 	if err != nil {
-		web.Error(w, http.StatusInternalServerError, err)
+		web.Error(w, http.StatusBadRequest, err)
 		return
 	}
-	web.JSON(w, http.StatusOK, cookies)
+	s.touchSession(sess)
+	s.bridge.ProxyToTab(w, r, sess.Port, sess.TabID, "/cookies")
 }
 
 func (s *Strategy) handleSetCookies(w http.ResponseWriter, r *http.Request) {
-	tabID := r.PathValue("id")
-	var req struct {
-		URL     string              `json:"url"`
-		Cookies []*primitive.Cookie `json:"cookies"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	sess, err := s.sessionFromRequest(r)
+	if err != nil {
 		web.Error(w, http.StatusBadRequest, err)
 		return
 	}
-
-	if err := s.p.Tabs.SetCookies(r.Context(), tabID, req.URL, req.Cookies); err != nil {
-		web.Error(w, http.StatusInternalServerError, err)
-		return
-	}
-	web.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	s.touchSession(sess)
+	s.bridge.ProxyToTab(w, r, sess.Port, sess.TabID, "/cookies")
 }
 
-func (s *Strategy) handleCloseTab(w http.ResponseWriter, r *http.Request) {
+// --- Tab-specific handlers ---
+
+// handleTabProxy returns a handler that proxies to the bridge for the given suffix.
+func (s *Strategy) handleTabProxy(suffix string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		tabID := r.PathValue("id")
+		port, err := s.portForTab(tabID)
+		if err != nil {
+			web.Error(w, http.StatusNotFound, err)
+			return
+		}
+		s.bridge.ProxyToTab(w, r, port, tabID, suffix)
+	}
+}
+
+func (s *Strategy) handleTabClose(w http.ResponseWriter, r *http.Request) {
 	tabID := r.PathValue("id")
-	if err := s.p.Tabs.Close(r.Context(), tabID); err != nil {
+	port, err := s.portForTab(tabID)
+	if err != nil {
+		web.Error(w, http.StatusNotFound, err)
+		return
+	}
+
+	if err := s.bridge.CloseTab(r.Context(), port, tabID); err != nil {
 		web.Error(w, http.StatusInternalServerError, err)
 		return
 	}
+	s.mgr.InvalidateTab(tabID)
+
+	// Remove from any session that owned this tab.
+	s.mu.RLock()
+	for _, sess := range s.sessions {
+		if sess.TabID == tabID {
+			sess.mu.Lock()
+			sess.TabID = ""
+			sess.mu.Unlock()
+		}
+	}
+	s.mu.RUnlock()
+
 	web.JSON(w, http.StatusOK, map[string]string{"status": "closed"})
 }
 
-func (s *Strategy) handleListProfiles(w http.ResponseWriter, r *http.Request) {
-	profiles, err := s.p.Profiles.List()
-	if err != nil {
-		web.Error(w, http.StatusInternalServerError, err)
-		return
-	}
-	web.JSON(w, http.StatusOK, profiles)
-}
+// --- Tab + instance management ---
 
-func (s *Strategy) handleCreateProfile(w http.ResponseWriter, r *http.Request) {
+func (s *Strategy) handleTabManage(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name string `json:"name"`
+		Action string `json:"action"`
+		TabID  string `json:"tabId"`
+		URL    string `json:"url"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		web.Error(w, http.StatusBadRequest, err)
+		web.Error(w, http.StatusBadRequest, fmt.Errorf("decode: %w", err))
 		return
 	}
 
-	if err := s.p.Profiles.Create(req.Name); err != nil {
-		web.Error(w, http.StatusInternalServerError, err)
-		return
+	switch req.Action {
+	case "new":
+		sess, err := s.getOrCreateSession(r.Context(), r.Header.Get("X-Session-ID"))
+		if err != nil {
+			web.Error(w, http.StatusServiceUnavailable, err)
+			return
+		}
+		url := req.URL
+		if url == "" {
+			url = "about:blank"
+		}
+		tabID, err := s.bridge.CreateTab(r.Context(), sess.Port, url)
+		if err != nil {
+			web.Error(w, http.StatusInternalServerError, err)
+			return
+		}
+		s.mgr.RegisterTab(tabID, sess.InstanceID)
+		web.JSON(w, http.StatusOK, map[string]string{"tabId": tabID, "url": url, "sessionId": sess.ID})
+
+	case "close":
+		if req.TabID == "" {
+			web.Error(w, http.StatusBadRequest, fmt.Errorf("tabId required"))
+			return
+		}
+		port, err := s.portForTab(req.TabID)
+		if err != nil {
+			web.Error(w, http.StatusNotFound, err)
+			return
+		}
+		if err := s.bridge.CloseTab(r.Context(), port, req.TabID); err != nil {
+			web.Error(w, http.StatusInternalServerError, err)
+			return
+		}
+		s.mgr.InvalidateTab(req.TabID)
+		web.JSON(w, http.StatusOK, map[string]string{"status": "closed"})
+
+	default:
+		web.Error(w, http.StatusBadRequest, fmt.Errorf("unknown action: %s", req.Action))
 	}
-	web.JSON(w, http.StatusCreated, map[string]string{"status": "created", "name": req.Name})
 }
 
-// cleanupLoop removes expired sessions.
+func (s *Strategy) handleListTabs(w http.ResponseWriter, _ *http.Request) {
+	running := s.mgr.Running()
+	var allTabs []map[string]string
+	for _, inst := range running {
+		tabs, err := s.bridge.FetchTabs("http://localhost:" + inst.Port)
+		if err != nil {
+			continue
+		}
+		for _, tab := range tabs {
+			allTabs = append(allTabs, map[string]string{
+				"id":         tab.ID,
+				"instanceId": inst.ID,
+				"url":        tab.URL,
+				"title":      tab.Title,
+			})
+		}
+	}
+	if allTabs == nil {
+		allTabs = []map[string]string{}
+	}
+	web.JSON(w, http.StatusOK, allTabs)
+}
+
+func (s *Strategy) handleListInstances(w http.ResponseWriter, _ *http.Request) {
+	web.JSON(w, http.StatusOK, s.mgr.List())
+}
+
+// --- Internal helpers ---
+
+// createSession allocates an instance and creates a tab for a new session.
+func (s *Strategy) createSession(ctx context.Context) (*Session, error) {
+	inst, err := s.mgr.Allocate()
+	if err != nil {
+		return nil, fmt.Errorf("allocate instance: %w", err)
+	}
+
+	tabID, err := s.bridge.CreateTab(ctx, inst.Port, "about:blank")
+	if err != nil {
+		return nil, fmt.Errorf("create tab: %w", err)
+	}
+
+	sess := &Session{
+		ID:         "sess_" + generateID(8),
+		TabID:      tabID,
+		InstanceID: inst.ID,
+		Port:       inst.Port,
+		CreatedAt:  time.Now(),
+		LastUsed:   time.Now(),
+	}
+
+	s.mu.Lock()
+	s.sessions[sess.ID] = sess
+	s.mu.Unlock()
+
+	s.mgr.RegisterTab(tabID, inst.ID)
+
+	slog.Info("session created", "session", sess.ID, "tab", tabID, "instance", inst.ID)
+	return sess, nil
+}
+
+// getOrCreateSession finds an existing session or creates a new one.
+func (s *Strategy) getOrCreateSession(ctx context.Context, sessionID string) (*Session, error) {
+	if sessionID != "" {
+		s.mu.RLock()
+		sess, ok := s.sessions[sessionID]
+		s.mu.RUnlock()
+		if ok {
+			return sess, nil
+		}
+	}
+	return s.createSession(ctx)
+}
+
+// sessionFromRequest extracts a session from the X-Session-ID header.
+func (s *Strategy) sessionFromRequest(r *http.Request) (*Session, error) {
+	sessionID := r.Header.Get("X-Session-ID")
+	if sessionID == "" {
+		return nil, fmt.Errorf("X-Session-ID header required")
+	}
+
+	s.mu.RLock()
+	sess, ok := s.sessions[sessionID]
+	s.mu.RUnlock()
+
+	if !ok {
+		return nil, fmt.Errorf("session %q not found", sessionID)
+	}
+	return sess, nil
+}
+
+// portForTab finds the port of the instance that owns a tab.
+func (s *Strategy) portForTab(tabID string) (string, error) {
+	inst, err := s.mgr.FindInstanceByTabID(tabID)
+	if err != nil {
+		return "", fmt.Errorf("tab %q not found: %w", tabID, err)
+	}
+	return inst.Port, nil
+}
+
+// touchSession updates the session's LastUsed timestamp.
+func (s *Strategy) touchSession(sess *Session) {
+	sess.mu.Lock()
+	sess.LastUsed = time.Now()
+	sess.mu.Unlock()
+}
+
+// cleanupLoop removes expired sessions periodically.
 func (s *Strategy) cleanupLoop(ctx context.Context) {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
@@ -582,11 +624,12 @@ func (s *Strategy) cleanupExpired() {
 		}
 		s.mu.Unlock()
 
-		if ok {
+		if ok && sess.TabID != "" {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			_ = s.p.Tabs.Close(ctx, sess.TabID)
+			_ = s.bridge.CloseTab(ctx, sess.Port, sess.TabID)
 			cancel()
-			slog.Info("session expired", "sessionId", id, "tabId", sess.TabID)
+			s.mgr.InvalidateTab(sess.TabID)
+			slog.Info("session expired", "session", id, "tab", sess.TabID)
 		}
 	}
 }

@@ -7,18 +7,25 @@ import (
 	"testing"
 	"time"
 
+	bridgepkg "github.com/pinchtab/pinchtab/internal/bridge"
+	"github.com/pinchtab/pinchtab/internal/instance"
 	"github.com/pinchtab/pinchtab/internal/strategy"
+	"github.com/pinchtab/pinchtab/internal/strategy/session"
+	"github.com/pinchtab/pinchtab/internal/strategy/simple"
+
 	_ "github.com/pinchtab/pinchtab/internal/strategy/explicit"
-	_ "github.com/pinchtab/pinchtab/internal/strategy/session"
 )
+
+// mockLauncher satisfies instance.InstanceLauncher for tests.
+type mockLauncher struct{}
+
+func (m *mockLauncher) Launch(string, string, bool) (*bridgepkg.Instance, error) { return nil, nil }
+func (m *mockLauncher) Stop(string) error                                        { return nil }
 
 func TestRegistry(t *testing.T) {
 	names := strategy.Names()
-	if len(names) < 2 {
-		t.Errorf("expected at least 2 strategies, got %d: %v", len(names), names)
-	}
 
-	// Check explicit is registered
+	// Explicit is registered via init().
 	found := false
 	for _, n := range names {
 		if n == "explicit" {
@@ -29,18 +36,6 @@ func TestRegistry(t *testing.T) {
 	if !found {
 		t.Error("explicit strategy not registered")
 	}
-
-	// Check session is registered
-	found = false
-	for _, n := range names {
-		if n == "session" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Error("session strategy not registered")
-	}
 }
 
 func TestNewStrategy(t *testing.T) {
@@ -49,7 +44,6 @@ func TestNewStrategy(t *testing.T) {
 		wantErr bool
 	}{
 		{"explicit", false},
-		{"session", false},
 		{"unknown", true},
 	}
 
@@ -95,87 +89,122 @@ func TestRegister_Duplicate(t *testing.T) {
 	}
 }
 
-func TestStrategyLifecycle(t *testing.T) {
-	strategies := []string{"explicit", "session"}
+func TestExplicitStrategyLifecycle(t *testing.T) {
+	s, err := strategy.New("explicit")
+	if err != nil {
+		t.Fatalf("failed to create strategy: %v", err)
+	}
 
-	for _, name := range strategies {
-		t.Run(name, func(t *testing.T) {
-			s, err := strategy.New(name)
-			if err != nil {
-				t.Fatalf("failed to create strategy: %v", err)
-			}
+	if err := s.Init(nil); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
 
-			// Init with nil primitives (just testing lifecycle, not functionality)
-			if err := s.Init(nil); err != nil {
-				t.Fatalf("Init failed: %v", err)
-			}
+	mux := http.NewServeMux()
+	s.RegisterRoutes(mux)
 
-			// Register routes
-			mux := http.NewServeMux()
-			s.RegisterRoutes(mux)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-			// Start
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
+	if err := s.Start(ctx); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
 
-			if err := s.Start(ctx); err != nil {
-				t.Fatalf("Start failed: %v", err)
-			}
+	if err := s.Stop(); err != nil {
+		t.Fatalf("Stop failed: %v", err)
+	}
+}
 
-			// Stop should be clean
-			if err := s.Stop(); err != nil {
-				t.Fatalf("Stop failed: %v", err)
-			}
-		})
+// newTestManager creates a Manager with a no-op launcher for lifecycle tests.
+func newTestManager() *instance.Manager {
+	return instance.NewManager(&mockLauncher{}, instance.NewBridgeClient(), nil)
+}
+
+func TestSimpleStrategyLifecycle(t *testing.T) {
+	s := simple.New(newTestManager())
+
+	if err := s.Init(nil); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	s.RegisterRoutes(mux)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := s.Start(ctx); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	if err := s.Stop(); err != nil {
+		t.Fatalf("Stop failed: %v", err)
+	}
+}
+
+func TestSessionStrategyLifecycle(t *testing.T) {
+	s := session.New(newTestManager())
+
+	if err := s.Init(nil); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	s.RegisterRoutes(mux)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := s.Start(ctx); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	if err := s.Stop(); err != nil {
+		t.Fatalf("Stop failed: %v", err)
 	}
 }
 
 func TestStrategySwitch(t *testing.T) {
-	// Simulate switching strategies via config
-	// This tests that both strategies can be created and torn down cleanly
-
 	ctx := context.Background()
+	mgr := newTestManager()
 
-	// Start with explicit
+	// Start with explicit.
 	s1, _ := strategy.New("explicit")
 	_ = s1.Init(nil)
 	mux1 := http.NewServeMux()
 	s1.RegisterRoutes(mux1)
 	_ = s1.Start(ctx)
-
-	// Verify it responds
 	srv1 := httptest.NewServer(mux1)
 	defer srv1.Close()
-
-	// Stop explicit
 	_ = s1.Stop()
 
-	// Switch to session
-	s2, _ := strategy.New("session")
+	// Switch to session.
+	s2 := session.New(mgr)
 	_ = s2.Init(nil)
 	mux2 := http.NewServeMux()
 	s2.RegisterRoutes(mux2)
 	_ = s2.Start(ctx)
-
-	// Verify it responds
 	srv2 := httptest.NewServer(mux2)
 	defer srv2.Close()
-
-	// Stop session
 	_ = s2.Stop()
+
+	// Switch to simple.
+	s3 := simple.New(mgr)
+	_ = s3.Init(nil)
+	mux3 := http.NewServeMux()
+	s3.RegisterRoutes(mux3)
+	_ = s3.Start(ctx)
+	srv3 := httptest.NewServer(mux3)
+	defer srv3.Close()
+	_ = s3.Stop()
 }
 
 func TestSessionStrategyCleanShutdown(t *testing.T) {
-	s, _ := strategy.New("session")
+	s := session.New(newTestManager())
 	_ = s.Init(nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	_ = s.Start(ctx)
 
-	// Simulate some activity time
 	time.Sleep(10 * time.Millisecond)
 
-	// Cancel context and stop - should not hang
 	cancel()
 
 	done := make(chan struct{})
@@ -186,8 +215,8 @@ func TestSessionStrategyCleanShutdown(t *testing.T) {
 
 	select {
 	case <-done:
-		// Good - stopped cleanly
+		// Good
 	case <-time.After(2 * time.Second):
-		t.Fatal("Stop() hung - shutdown not clean")
+		t.Fatal("Stop() hung")
 	}
 }
