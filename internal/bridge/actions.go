@@ -61,7 +61,10 @@ func (b *Bridge) InitActionRegistry() {
 			if req.Selector != "" {
 				return map[string]any{"filled": req.Text}, chromedp.Run(ctx, chromedp.SetValue(req.Selector, req.Text, chromedp.ByQuery))
 			}
-			return map[string]any{"filled": req.Text}, nil
+			if req.NodeID > 0 {
+				return map[string]any{"filled": req.Text}, FillByNodeID(ctx, req.NodeID, req.Text)
+			}
+			return nil, fmt.Errorf("need selector or ref")
 		},
 		ActionPress: func(ctx context.Context, req ActionRequest) (map[string]any, error) {
 			if req.Key == "" {
