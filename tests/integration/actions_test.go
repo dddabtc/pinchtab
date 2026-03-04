@@ -229,6 +229,65 @@ func TestAction_Fill(t *testing.T) {
 	}
 }
 
+// A3b: Fill by ref actually sets the value (verifies fix for issue #114)
+// This test ensures fill with NodeID (ref) actually modifies the input value
+func TestAction_Fill_ActuallySetsValue(t *testing.T) {
+	navigate(t, "https://httpbin.org/forms/post")
+	defer closeCurrentTab(t)
+
+	// Get snapshot to find an input
+	_, snapBody := httpGet(t, "/snapshot?filter=interactive&format=text&tabId="+currentTabID)
+	ref := findRef(string(snapBody), "textbox")
+	if ref == "" {
+		ref = findRef(string(snapBody), "input")
+	}
+	if ref == "" {
+		t.Skip("no input ref found")
+	}
+
+	// Fill the input with a test value
+	testValue := "test_fill_" + randomString(8)
+	code, _ := httpPost(t, "/action", map[string]any{
+		"tabId": currentTabID,
+		"kind":  "fill",
+		"ref":   ref,
+		"text":  testValue,
+	})
+	if code != 200 {
+		t.Fatalf("fill failed with %d", code)
+	}
+
+	// Take a new snapshot to verify the value was actually set
+	_, snapBody2 := httpGet(t, "/snapshot?tabId="+currentTabID)
+	snapStr := string(snapBody2)
+
+	// Check if the filled value appears in the snapshot
+	// The snapshot should contain the value attribute or text content of the input
+	if !strings.Contains(snapStr, testValue) {
+		t.Errorf("fill did not set value - snapshot does not contain %q (issue #114: fill with ref no-ops)", testValue)
+		t.Logf("snapshot: %s", snapStr[:min(500, len(snapStr))])
+	}
+	t.Logf("fill verified: value %q is present in snapshot", testValue)
+}
+
+// Helper: random string for unique test values
+func randomString(n int) string {
+	chars := "abcdefghijklmnopqrstuvwxyz0123456789"
+	result := ""
+	for i := 0; i < n; i++ {
+		result += string(chars[i%len(chars)])
+	}
+	return result
+}
+
+// Helper: min
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 // A5: Focus
 func TestAction_Focus(t *testing.T) {
 	navigate(t, "https://httpbin.org/forms/post")
