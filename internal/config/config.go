@@ -256,65 +256,119 @@ func DefaultFileConfig() FileConfig {
 
 func HandleConfigCommand(cfg *RuntimeConfig) {
 	if len(os.Args) < 3 {
-		fmt.Println("Usage: pinchtab config <command>")
-		fmt.Println("Commands:")
-		fmt.Println("  init    - Create default config file")
-		fmt.Println("  show    - Show current configuration")
+		printConfigHelp()
 		return
 	}
 
-	switch os.Args[2] {
-	case "init":
-		configPath := filepath.Join(homeDir(), ".pinchtab", "config.json")
+	cmd := os.Args[2]
+	args := os.Args[3:]
 
-		if _, err := os.Stat(configPath); err == nil {
-			fmt.Printf("Config file already exists at %s\n", configPath)
-			fmt.Print("Overwrite? (y/N): ")
-			var response string
-			_, _ = fmt.Scanln(&response)
-			if response != "y" && response != "Y" {
-				return
+	switch cmd {
+	case "init":
+		handleConfigInit()
+	case "show":
+		format := "json"
+		if len(args) > 0 && strings.HasPrefix(args[0], "--format") {
+			if strings.Contains(args[0], "=") {
+				format = strings.Split(args[0], "=")[1]
+			} else if len(args) > 1 {
+				format = args[1]
 			}
 		}
-
-		if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
-			fmt.Printf("Error creating directory: %v\n", err)
+		if err := DisplayConfig(format); err != nil {
+			fmt.Fprintf(os.Stderr, "❌ %v\n", err)
 			os.Exit(1)
 		}
 
-		fc := DefaultFileConfig()
-		data, _ := json.MarshalIndent(fc, "", "  ")
-		if err := os.WriteFile(configPath, data, 0644); err != nil {
-			fmt.Printf("Error writing config: %v\n", err)
+	case "set":
+		if len(args) < 2 {
+			fmt.Println("Usage: pinchtab config set <key> <value>")
+			fmt.Println("Example: pinchtab config set server.port 9999")
+			os.Exit(1)
+		}
+		if err := SetConfigValue(args[0], args[1]); err != nil {
+			fmt.Fprintf(os.Stderr, "❌ %v\n", err)
 			os.Exit(1)
 		}
 
-		fmt.Printf("Config file created at %s\n", configPath)
-		fmt.Println("\nExample with auth token:")
-		fmt.Println(`{
-  "port": "9867",
-  "token": "your-secret-token",
-  "headless": true,
-  "stateDir": "` + fc.StateDir + `",
-  "profileDir": "` + fc.ProfileDir + `"
-}`)
+	case "patch":
+		if len(args) < 1 {
+			fmt.Println("Usage: pinchtab config patch '<json>'")
+			fmt.Println("Example: pinchtab config patch '{\"server\": {\"port\": \"9999\"}}'")
+			os.Exit(1)
+		}
+		if err := PatchConfigJSON(args[0]); err != nil {
+			fmt.Fprintf(os.Stderr, "❌ %v\n", err)
+			os.Exit(1)
+		}
 
-	case "show":
-		fmt.Println("Current configuration:")
-		fmt.Printf("  Port:       %s\n", cfg.Port)
-		fmt.Printf("  CDP URL:    %s\n", cfg.CdpURL)
-		fmt.Printf("  Token:      %s\n", MaskToken(cfg.Token))
-		fmt.Printf("  State Dir:  %s\n", cfg.StateDir)
-		fmt.Printf("  Profile:    %s\n", cfg.ProfileDir)
-		fmt.Printf("  Headless:   %v\n", cfg.Headless)
-		fmt.Printf("  Max Tabs:   %d\n", cfg.MaxTabs)
-		fmt.Printf("  No Restore: %v\n", cfg.NoRestore)
-		fmt.Printf("  Timeouts:   action=%v navigate=%v\n", cfg.ActionTimeout, cfg.NavigateTimeout)
+	case "validate":
+		isValid, errs := ValidateConfig()
+		if isValid {
+			fmt.Println("✅ Config is valid")
+		} else {
+			fmt.Println("❌ Config validation failed:")
+			for _, err := range errs {
+				fmt.Printf("  - %s\n", err)
+			}
+			os.Exit(1)
+		}
 
 	default:
-		fmt.Printf("Unknown command: %s\n", os.Args[2])
+		fmt.Printf("Unknown config command: %s\n", cmd)
+		printConfigHelp()
 		os.Exit(1)
 	}
+}
+
+func printConfigHelp() {
+	fmt.Println("Usage: pinchtab config <command> [args]")
+	fmt.Println()
+	fmt.Println("Commands:")
+	fmt.Println("  init              Create default config file")
+	fmt.Println("  show [--format]   Display config (json|yaml)")
+	fmt.Println("  set <key> <val>   Set config value (e.g., server.port 9999)")
+	fmt.Println("  patch '<json>'    Merge JSON object into config")
+	fmt.Println("  validate          Validate config file")
+	fmt.Println()
+	fmt.Println("Config Sections:")
+	fmt.Println("  server.port, server.stateDir, server.profileDir, server.token")
+	fmt.Println("  chrome.headless, chrome.maxTabs, chrome.noRestore")
+	fmt.Println("  orchestrator.strategy, orchestrator.allocationPolicy")
+	fmt.Println("  timeouts.actionSec, timeouts.navigateSec")
+	fmt.Println()
+	fmt.Println("Examples:")
+	fmt.Println("  pinchtab config set server.port 9999")
+	fmt.Println("  pinchtab config patch '{\"chrome\": {\"headless\": false}}'")
+	fmt.Println("  pinchtab config validate")
+}
+
+func handleConfigInit() {
+	configPath := GetConfigPathOrDefault()
+
+	if _, err := os.Stat(configPath); err == nil {
+		fmt.Printf("Config file already exists at %s\n", configPath)
+		fmt.Print("Overwrite? (y/N): ")
+		var response string
+		_, _ = fmt.Scanln(&response)
+		if response != "y" && response != "Y" {
+			return
+		}
+	}
+
+	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
+		fmt.Printf("Error creating directory: %v\n", err)
+		os.Exit(1)
+	}
+
+	fc := DefaultFileConfig()
+	data, _ := json.MarshalIndent(fc, "", "  ")
+	if err := os.WriteFile(configPath, data, 0644); err != nil {
+		fmt.Printf("Error writing config: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("✅ Config file created at %s\n", configPath)
 }
 
 func MaskToken(t string) string {
