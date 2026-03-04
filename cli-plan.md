@@ -287,3 +287,22 @@ pinchtab config validate
 
 **Branch:** `feat/cli-refactor` (based on `feat/allocation-strategies`)
 **Phase:** 1 (Planning) ✅
+**Phase:** 1 (Implementation) ✅
+
+### Phase 1 Complete ✅
+- [x] Removed all browser control CLI commands (nav, snap, click, type, fill, press, hover, scroll, select, focus, text, screenshot, eval, pdf, quick, tab operations, instance launch/navigate/logs/stop)
+- [x] Kept monitoring commands: help, health, config, profiles, instances, tabs, connect
+- [x] Updated help text with clear guidance to HTTP API and client libraries
+- [x] Simplified cmd_cli.go to ~250 lines (was ~1700)
+- [x] Updated main.go to handle only monitoring commands
+- [x] Updated cmd_cli_test.go with new test suite (15 tests, all passing)
+- [x] All tests passing
+- [x] Pre-commit checks passing
+
+**Commit:** `9cae4f5`
+
+### What's Next
+Phase 2: Configuration System Expansion
+- Add `config set` and `config patch` commands
+- Support JSON and YAML formats
+- Implement config validation
