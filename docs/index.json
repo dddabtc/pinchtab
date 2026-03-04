@@ -16,11 +16,12 @@
     "references/configuration.md"
   ],
   "architecture": [
-    "architecture/pinchtab-architecture.md",
+    "architecture/architecture.md",
     "architecture/chrome-lifecycle-and-orchestration.md",
     "architecture/dashboard-ui.md",
     "architecture/allocation-strategies.md",
-    "architecture/building.md"
+    "architecture/building.md",
+    "architecture/chart-porn.md"
   ],
   "guides": [
     "guides/cdp-url-shared-chrome.md",
@@ -30,10 +31,5 @@
     "guides/memory-monitoring.md",
     "guides/data-storage.md",
     "guides/raspberry-pi.md"
-  ],
-  "proposals": [
-    "proposals/default-instance.md",
-    "proposals/performance-optimization.md",
-    "proposals/ui-enhancements.md"
   ]
 }

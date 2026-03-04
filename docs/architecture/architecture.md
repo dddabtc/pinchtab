@@ -8,10 +8,10 @@ to give AI agents browser control via a simple REST API.
 **Self-hosted mode (default):** Pinchtab launches and manages its own Chrome instance.
 
 ```
-┌─────────────┐     HTTP      ┌──────────────┐      CDP       ┌──────────────┐
-│   AI Agent  │ ────────────▶ │   Pinchtab   │ ─────────────▶ │    Chrome    │
+┌─────────────┐     HTTP      ┌──────────────┐      CDP       ┌───────────────┐
+│   AI Agent  │ ────────────▶ │   Pinchtab   │ ─────────────▶ │    Chrome     │
 │  (any LLM)  │ ◀──────────── │  (Go binary) │ ◀───────────── │ self-launched │
-└─────────────┘    JSON/text  └──────────────┘   WebSocket    └──────────────┘
+└─────────────┘    JSON/text  └──────────────┘   WebSocket    └───────────────┘
 ```
 
 **Remote Chrome mode (CDP_URL):** Pinchtab connects to an existing Chrome instance via CDP_URL.

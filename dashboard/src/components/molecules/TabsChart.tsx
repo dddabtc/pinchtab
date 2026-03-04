@@ -103,7 +103,7 @@ export default function TabsChart({
   // Show empty state if no data or too few points to render meaningfully
   if (mergedData.length < 2) {
     return (
-      <div className="flex h-[200px] items-center justify-center rounded-lg border border-border-subtle bg-bg-surface text-sm text-text-muted">
+      <div className="flex h-50 items-center justify-center rounded-lg border border-border-subtle bg-bg-surface text-sm text-text-muted">
         {mergedData.length === 0
           ? "Collecting data..."
           : "Waiting for more data..."}
