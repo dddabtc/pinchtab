@@ -311,8 +311,12 @@ func TestSchedulerQueueStats(t *testing.T) {
 	s, executor := newTestScheduler(t)
 	defer executor.Close()
 
-	s.Submit(SubmitRequest{AgentID: "a1", Action: "click", TabID: "tab-1"})
-	s.Submit(SubmitRequest{AgentID: "a1", Action: "click", TabID: "tab-2"})
+	if _, err := s.Submit(SubmitRequest{AgentID: "a1", Action: "click", TabID: "tab-1"}); err != nil {
+		t.Fatalf("submit failed: %v", err)
+	}
+	if _, err := s.Submit(SubmitRequest{AgentID: "a1", Action: "click", TabID: "tab-2"}); err != nil {
+		t.Fatalf("submit failed: %v", err)
+	}
 
 	stats := s.QueueStats()
 	if stats.TotalQueued != 2 {

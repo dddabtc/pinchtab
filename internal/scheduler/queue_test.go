@@ -73,9 +73,13 @@ func TestQueueFairness(t *testing.T) {
 
 	// Agent a1 has 3 tasks, a2 has 1 task.
 	for i := range 3 {
-		q.Enqueue(&Task{ID: "a1-" + string(rune('0'+i)), AgentID: "a1", CreatedAt: time.Now()})
+		if _, err := q.Enqueue(&Task{ID: "a1-" + string(rune('0'+i)), AgentID: "a1", CreatedAt: time.Now()}); err != nil {
+			t.Fatalf("enqueue failed: %v", err)
+		}
 	}
-	q.Enqueue(&Task{ID: "a2-0", AgentID: "a2", CreatedAt: time.Now()})
+	if _, err := q.Enqueue(&Task{ID: "a2-0", AgentID: "a2", CreatedAt: time.Now()}); err != nil {
+		t.Fatalf("enqueue failed: %v", err)
+	}
 
 	// First dequeue: both have 0 inflight, either could be picked.
 	got1 := q.Dequeue(10, 20)
@@ -98,8 +102,12 @@ func TestQueueFairness(t *testing.T) {
 func TestQueueInflightLimit(t *testing.T) {
 	q := NewTaskQueue(100, 100)
 
-	q.Enqueue(&Task{ID: "t1", AgentID: "a1", CreatedAt: time.Now()})
-	q.Enqueue(&Task{ID: "t2", AgentID: "a1", CreatedAt: time.Now()})
+	if _, err := q.Enqueue(&Task{ID: "t1", AgentID: "a1", CreatedAt: time.Now()}); err != nil {
+		t.Fatalf("enqueue failed: %v", err)
+	}
+	if _, err := q.Enqueue(&Task{ID: "t2", AgentID: "a1", CreatedAt: time.Now()}); err != nil {
+		t.Fatalf("enqueue failed: %v", err)
+	}
 
 	// Dequeue with max inflight = 1
 	got := q.Dequeue(1, 2)
@@ -123,8 +131,12 @@ func TestQueueInflightLimit(t *testing.T) {
 
 func TestQueueRemove(t *testing.T) {
 	q := NewTaskQueue(10, 10)
-	q.Enqueue(&Task{ID: "t1", AgentID: "a1", CreatedAt: time.Now()})
-	q.Enqueue(&Task{ID: "t2", AgentID: "a1", CreatedAt: time.Now()})
+	if _, err := q.Enqueue(&Task{ID: "t1", AgentID: "a1", CreatedAt: time.Now()}); err != nil {
+		t.Fatalf("enqueue failed: %v", err)
+	}
+	if _, err := q.Enqueue(&Task{ID: "t2", AgentID: "a1", CreatedAt: time.Now()}); err != nil {
+		t.Fatalf("enqueue failed: %v", err)
+	}
 
 	if !q.Remove("t1", "a1") {
 		t.Error("should find and remove t1")
@@ -157,8 +169,12 @@ func TestQueueExpireDeadlined(t *testing.T) {
 		ID: "valid", AgentID: "a1", CreatedAt: now,
 		Deadline: now.Add(1 * time.Hour),
 	}
-	q.Enqueue(pastDeadline)
-	q.Enqueue(futureDeadline)
+	if _, err := q.Enqueue(pastDeadline); err != nil {
+		t.Fatalf("enqueue failed: %v", err)
+	}
+	if _, err := q.Enqueue(futureDeadline); err != nil {
+		t.Fatalf("enqueue failed: %v", err)
+	}
 
 	expired := q.ExpireDeadlined()
 	if len(expired) != 1 || expired[0].ID != "expired" {
@@ -173,8 +189,12 @@ func TestQueueExpireDeadlined(t *testing.T) {
 
 func TestQueueStats(t *testing.T) {
 	q := NewTaskQueue(100, 100)
-	q.Enqueue(&Task{ID: "t1", AgentID: "a1", CreatedAt: time.Now()})
-	q.Enqueue(&Task{ID: "t2", AgentID: "a2", CreatedAt: time.Now()})
+	if _, err := q.Enqueue(&Task{ID: "t1", AgentID: "a1", CreatedAt: time.Now()}); err != nil {
+		t.Fatalf("enqueue failed: %v", err)
+	}
+	if _, err := q.Enqueue(&Task{ID: "t2", AgentID: "a2", CreatedAt: time.Now()}); err != nil {
+		t.Fatalf("enqueue failed: %v", err)
+	}
 	q.Dequeue(10, 20) // a1 or a2 gets 1 inflight
 
 	stats := q.Stats()
