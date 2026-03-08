@@ -10,9 +10,6 @@ import (
 var version = "dev"
 
 func startupMode(args []string) (string, bool) {
-	if os.Getenv("PINCHTAB_ONLY") == "1" || os.Getenv("BRIDGE_ONLY") == "1" {
-		return "bridge", true
-	}
 	if len(args) <= 1 {
 		return "server", true
 	}
