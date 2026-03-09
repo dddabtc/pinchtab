@@ -220,6 +220,64 @@ pt_get() { pinchtab GET "$1"; echo "$RESULT"; }
 pt_post() { pinchtab POST "$1" -d "$2"; echo "$RESULT"; }
 
 # ================================================================
+# Element interaction helpers
+# ================================================================
+
+# Get ref for element by name from last snapshot
+get_ref() {
+  local name="$1"
+  echo "$RESULT" | jq -r ".nodes[] | select(.name == \"$name\") | .ref" | head -1
+}
+
+# Get ref for element by role from last snapshot
+get_ref_by_role() {
+  local role="$1"
+  echo "$RESULT" | jq -r ".nodes[] | select(.role == \"$role\") | .ref" | head -1
+}
+
+# Click a button by name (requires snapshot in $RESULT)
+click_button() {
+  local name="$1"
+  local ref=$(get_ref "$name")
+  
+  if [ -n "$ref" ] && [ "$ref" != "null" ]; then
+    pt_post /action -d "{\"kind\":\"click\",\"ref\":\"${ref}\"}" > /dev/null
+    echo -e "  ${GREEN}✓${NC} clicked '$name' (ref: $ref)"
+    ((ASSERTIONS_PASSED++)) || true
+  else
+    echo -e "  ${RED}✗${NC} button '$name' not found"
+    ((ASSERTIONS_FAILED++)) || true
+  fi
+}
+
+# Type into a field by name or role
+type_into() {
+  local name="$1"
+  local text="$2"
+  local ref=$(get_ref "$name")
+  
+  # Fallback to role if name not found
+  [ -z "$ref" ] || [ "$ref" = "null" ] && ref=$(get_ref_by_role "textbox")
+  
+  if [ -n "$ref" ] && [ "$ref" != "null" ]; then
+    pt_post /action -d "{\"kind\":\"type\",\"ref\":\"${ref}\",\"text\":\"${text}\"}" > /dev/null
+    echo -e "  ${GREEN}✓${NC} typed '$text' into '$name' (ref: $ref)"
+    ((ASSERTIONS_PASSED++)) || true
+  else
+    echo -e "  ${RED}✗${NC} input '$name' not found"
+    ((ASSERTIONS_FAILED++)) || true
+  fi
+}
+
+# Press a key
+press_key() {
+  local key="$1"
+  pt_post /action -d "{\"kind\":\"press\",\"key\":\"${key}\"}" > /dev/null
+  echo -e "  ${GREEN}✓${NC} pressed '$key'"
+  ((ASSERTIONS_PASSED++)) || true
+}
+
+# ================================================================
 # Tab helpers
 # ================================================================
 
