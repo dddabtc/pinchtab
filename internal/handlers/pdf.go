@@ -15,6 +15,7 @@ import (
 
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
+	"github.com/pinchtab/pinchtab/internal/idpi"
 	"github.com/pinchtab/pinchtab/internal/web"
 )
 
@@ -121,6 +122,32 @@ func (h *Handlers) HandlePDF(w http.ResponseWriter, r *http.Request) {
 	pageRanges := r.URL.Query().Get("pageRanges") // e.g., "1-3,5"
 	headerTemplate := r.URL.Query().Get("headerTemplate")
 	footerTemplate := r.URL.Query().Get("footerTemplate")
+
+	// IDPI: scan page title, URL, and body text for injection patterns before
+	// rendering to PDF. PDF output is opaque binary — any signal is conveyed
+	// via response headers. A 5-second sub-deadline prevents the scan from
+	// consuming the full action timeout budget.
+	if h.Config.IDPI.Enabled && h.Config.IDPI.ScanContent {
+		var pageTitle, pageURL, pageText string
+		scanCtx, scanCancel := context.WithTimeout(tCtx, 5*time.Second)
+		defer scanCancel()
+		_ = chromedp.Run(scanCtx,
+			chromedp.Title(&pageTitle),
+			chromedp.Location(&pageURL),
+			chromedp.Evaluate(`document.body ? document.body.innerText : ""`, &pageText),
+		)
+		corpus := pageTitle + "\n" + pageURL + "\n" + pageText
+		if ir := idpi.ScanContent(corpus, h.Config.IDPI); ir.Threat {
+			if ir.Blocked {
+				web.Error(w, http.StatusForbidden, fmt.Errorf("idpi: %s", ir.Reason))
+				return
+			}
+			w.Header().Set("X-IDPI-Warning", ir.Reason)
+			if ir.Pattern != "" {
+				w.Header().Set("X-IDPI-Pattern", ir.Pattern)
+			}
+		}
+	}
 
 	var buf []byte
 	if err := chromedp.Run(tCtx,

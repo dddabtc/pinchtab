@@ -321,3 +321,139 @@ func TestValidEnumValues(t *testing.T) {
 		}
 	}
 }
+
+// --- IDPI validation tests ---
+
+// TestValidateIDPIConfig_Disabled verifies that a disabled IDPI config produces
+// no errors regardless of what fields are set.
+func TestValidateIDPIConfig_Disabled(t *testing.T) {
+	errs := validateIDPIConfig(IDPIConfig{
+		Enabled:        false,
+		AllowedDomains: []string{"", "  ", "file:///etc/passwd"},
+		CustomPatterns: []string{"", "  "},
+	})
+	if len(errs) != 0 {
+		t.Errorf("expected no errors when IDPI disabled, got: %v", errs)
+	}
+}
+
+// TestValidateIDPIConfig_ValidConfig verifies that a well-formed enabled config
+// produces no errors.
+func TestValidateIDPIConfig_ValidConfig(t *testing.T) {
+	errs := validateIDPIConfig(IDPIConfig{
+		Enabled:        true,
+		AllowedDomains: []string{"example.com", "*.example.com", "*"},
+		CustomPatterns: []string{"exfiltrate this", "data leak"},
+	})
+	if len(errs) != 0 {
+		t.Errorf("expected no errors for valid IDPI config, got: %v", errs)
+	}
+}
+
+// TestValidateIDPIConfig_EmptyDomain verifies that an empty or whitespace-only
+// domain pattern is rejected.
+func TestValidateIDPIConfig_EmptyDomain(t *testing.T) {
+	cases := []struct {
+		name   string
+		domain string
+	}{
+		{"empty string", ""},
+		{"spaces only", "   "},
+		{"tab only", "\t"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			errs := validateIDPIConfig(IDPIConfig{
+				Enabled:        true,
+				AllowedDomains: []string{tc.domain},
+			})
+			if len(errs) == 0 {
+				t.Errorf("expected error for empty domain %q, got none", tc.domain)
+			}
+			if len(errs) > 0 && !strings.Contains(errs[0].Error(), "security.idpi.allowedDomains") {
+				t.Errorf("expected field name in error, got: %v", errs[0])
+			}
+		})
+	}
+}
+
+// TestValidateIDPIConfig_DomainWithInternalWhitespace verifies that a domain
+// pattern containing internal spaces is rejected.
+func TestValidateIDPIConfig_DomainWithInternalWhitespace(t *testing.T) {
+	errs := validateIDPIConfig(IDPIConfig{
+		Enabled:        true,
+		AllowedDomains: []string{"example .com"},
+	})
+	if len(errs) == 0 {
+		t.Error("expected error for domain with internal whitespace, got none")
+	}
+}
+
+// TestValidateIDPIConfig_FileSchemeBlocked verifies that file:// domain patterns
+// are rejected because they cannot represent a valid network host.
+func TestValidateIDPIConfig_FileSchemeBlocked(t *testing.T) {
+	for _, pattern := range []string{
+		"file:///etc/passwd",
+		"file://localhost/etc/passwd",
+	} {
+		errs := validateIDPIConfig(IDPIConfig{
+			Enabled:        true,
+			AllowedDomains: []string{pattern},
+		})
+		if len(errs) == 0 {
+			t.Errorf("expected error for file:// pattern %q, got none", pattern)
+		}
+		if len(errs) > 0 && !strings.Contains(errs[0].Error(), "file://") {
+			t.Errorf("expected file:// mention in error, got: %v", errs[0])
+		}
+	}
+}
+
+// TestValidateIDPIConfig_EmptyCustomPattern verifies that an empty or
+// whitespace-only custom pattern is rejected.
+func TestValidateIDPIConfig_EmptyCustomPattern(t *testing.T) {
+	cases := []string{"", "  ", "\t"}
+	for _, p := range cases {
+		errs := validateIDPIConfig(IDPIConfig{
+			Enabled:        true,
+			CustomPatterns: []string{p},
+		})
+		if len(errs) == 0 {
+			t.Errorf("expected error for empty custom pattern %q, got none", p)
+		}
+		if len(errs) > 0 && !strings.Contains(errs[0].Error(), "customPatterns") {
+			t.Errorf("expected customPatterns field in error, got: %v", errs[0])
+		}
+	}
+}
+
+// TestValidateIDPIConfig_MultipleErrors ensures all IDPI violations are
+// accumulated rather than short-circuited.
+func TestValidateIDPIConfig_MultipleErrors(t *testing.T) {
+	errs := validateIDPIConfig(IDPIConfig{
+		Enabled:        true,
+		AllowedDomains: []string{"", "file:///bad"},
+		CustomPatterns: []string{"", "   "},
+	})
+	if len(errs) < 4 {
+		t.Errorf("expected at least 4 IDPI errors, got %d: %v", len(errs), errs)
+	}
+}
+
+// TestValidateFileConfig_IDPIPassthrough verifies that ValidateFileConfig
+// surfaces IDPI errors alongside other config errors.
+func TestValidateFileConfig_IDPIPassthrough(t *testing.T) {
+	fc := &FileConfig{
+		Security: SecurityConfig{
+			IDPI: IDPIConfig{
+				Enabled:        true,
+				AllowedDomains: []string{""},   // invalid
+				CustomPatterns: []string{"  "}, // invalid
+			},
+		},
+	}
+	errs := ValidateFileConfig(fc)
+	if len(errs) < 2 {
+		t.Errorf("expected at least 2 IDPI errors via ValidateFileConfig, got %d: %v", len(errs), errs)
+	}
+}

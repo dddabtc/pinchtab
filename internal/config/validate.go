@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"strconv"
+	"strings"
 )
 
 // ValidationError represents a configuration validation error.
@@ -102,6 +103,9 @@ func ValidateFileConfig(fc *FileConfig) []error {
 			})
 		}
 	}
+
+	// IDPI validation
+	errs = append(errs, validateIDPIConfig(fc.Security.IDPI)...)
 
 	// Timeouts validation
 	if fc.Timeouts.ActionSec < 0 {
@@ -226,6 +230,50 @@ func ValidEvictionPolicies() []string {
 // ValidStrategies returns all valid strategy values.
 func ValidStrategies() []string {
 	return []string{"simple", "explicit", "simple-autorestart"}
+}
+
+// validateIDPIConfig validates the security.idpi sub-section.
+// Validation is skipped when IDPI is disabled; a zero-value IDPIConfig is always valid.
+func validateIDPIConfig(cfg IDPIConfig) []error {
+	if !cfg.Enabled {
+		return nil
+	}
+
+	var errs []error
+
+	for _, domain := range cfg.AllowedDomains {
+		trimmed := strings.TrimSpace(domain)
+		if trimmed == "" {
+			errs = append(errs, ValidationError{
+				Field:   "security.idpi.allowedDomains",
+				Message: "domain pattern must not be empty or whitespace-only",
+			})
+			continue
+		}
+		if strings.ContainsAny(trimmed, " \t") {
+			errs = append(errs, ValidationError{
+				Field:   "security.idpi.allowedDomains",
+				Message: fmt.Sprintf("domain pattern %q must not contain whitespace", trimmed),
+			})
+		}
+		if strings.HasPrefix(trimmed, "file://") {
+			errs = append(errs, ValidationError{
+				Field:   "security.idpi.allowedDomains",
+				Message: fmt.Sprintf("domain pattern %q must not use the file:// scheme; use a hostname", trimmed),
+			})
+		}
+	}
+
+	for _, p := range cfg.CustomPatterns {
+		if strings.TrimSpace(p) == "" {
+			errs = append(errs, ValidationError{
+				Field:   "security.idpi.customPatterns",
+				Message: "custom pattern must not be empty or whitespace-only",
+			})
+		}
+	}
+
+	return errs
 }
 
 // ValidAllocationPolicies returns all valid allocation policy values.

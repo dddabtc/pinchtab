@@ -3,11 +3,29 @@ package testutil
 import (
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 )
+
+// GetFreePort returns an available TCP port on the loopback interface.
+// It opens a listener on :0 to let the OS assign a free port, records the
+// address, then closes the listener before returning the port string.
+//
+// Note: there is an inherent TOCTOU window between Close and the caller
+// binding the port, but this is acceptable in test environments.
+func GetFreePort() (string, error) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return "", err
+	}
+	defer l.Close() //nolint:errcheck
+	addr := l.Addr().(*net.TCPAddr)
+	return strconv.Itoa(addr.Port), nil
+}
 
 // Client is an HTTP client bound to a test server URL.
 type Client struct {
@@ -181,4 +199,55 @@ func JSONField(t *testing.T, data []byte, key string) string {
 		b, _ := json.Marshal(val)
 		return string(b)
 	}
+}
+
+// GetWithHeaders performs a GET and returns status, body, and response headers.
+// Use this when the test needs to inspect response headers (e.g. X-IDPI-Warning).
+func (c *Client) GetWithHeaders(t *testing.T, path string) (int, []byte, http.Header) {
+	t.Helper()
+	req, err := http.NewRequest("GET", c.BaseURL+path, nil)
+	if err != nil {
+		t.Fatalf("GET %s request creation failed: %v", path, err)
+	}
+	if c.AuthToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.AuthToken)
+	}
+	client := &http.Client{Timeout: c.Timeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("GET %s failed: %v", path, err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	body, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, body, resp.Header
+}
+
+// PostWithHeaders performs a POST and returns status, body, and response headers.
+// Use this when the test needs to inspect response headers (e.g. X-IDPI-Warning).
+func (c *Client) PostWithHeaders(t *testing.T, path string, payload any) (int, []byte, http.Header) {
+	t.Helper()
+	var reader io.Reader
+	if payload != nil {
+		data, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatalf("marshal failed: %v", err)
+		}
+		reader = strings.NewReader(string(data))
+	}
+	req, err := http.NewRequest("POST", c.BaseURL+path, reader)
+	if err != nil {
+		t.Fatalf("POST %s request creation failed: %v", path, err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.AuthToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.AuthToken)
+	}
+	client := &http.Client{Timeout: c.Timeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("POST %s failed: %v", path, err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	body, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, body, resp.Header
 }

@@ -43,6 +43,10 @@ type ServerConfig struct {
 	AllowDownload   bool // default: false
 	AllowUpload     bool // default: false
 
+	// IDPI configuration applied to security.idpi in config.json.
+	// Default zero value disables all IDPI checks.
+	IDPI appconfig.IDPIConfig
+
 	// Orchestrator
 	Strategy         string // default: "" (uses config default: "simple")
 	AllocationPolicy string // default: "" (uses config default: "fcfs")
@@ -191,6 +195,7 @@ func writeServerConfig(path string, srv *Server, cfg ServerConfig) error {
 	fc.Security.AllowScreencast = &allowScreencast
 	fc.Security.AllowDownload = &allowDownload
 	fc.Security.AllowUpload = &allowUpload
+	fc.Security.IDPI = cfg.IDPI
 
 	if cfg.Strategy != "" {
 		fc.MultiInstance.Strategy = cfg.Strategy
