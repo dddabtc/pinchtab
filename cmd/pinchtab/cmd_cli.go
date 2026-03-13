@@ -27,7 +27,6 @@ var quickCmd = &cobra.Command{
 var navCmd = &cobra.Command{
 	Use:   "nav <url>",
 	Short: "Navigate to URL",
-	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
 		runCLIWith(cfg, func(client *http.Client, base, token string) {
@@ -50,7 +49,6 @@ var snapCmd = &cobra.Command{
 var clickCmd = &cobra.Command{
 	Use:   "click <ref>",
 	Short: "Click element",
-	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
 		runCLIWith(cfg, func(client *http.Client, base, token string) {
@@ -142,7 +140,6 @@ var fillCmd = &cobra.Command{
 var hoverCmd = &cobra.Command{
 	Use:   "hover <ref>",
 	Short: "Hover element",
-	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
 		runCLIWith(cfg, func(client *http.Client, base, token string) {
@@ -242,7 +239,6 @@ var instanceCmd = &cobra.Command{
 var findCmd = &cobra.Command{
 	Use:   "find <query>",
 	Short: "Find elements by natural language query",
-	Args:  cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
 		runCLIWith(cfg, func(client *http.Client, base, token string) {
@@ -286,10 +282,18 @@ func init() {
 	findCmd.GroupID = "browser"
 	selectCmd.GroupID = "browser"
 
-	snapCmd.FParseErrWhitelist = cobra.FParseErrWhitelist{UnknownFlags: true}
-	screenshotCmd.FParseErrWhitelist = cobra.FParseErrWhitelist{UnknownFlags: true}
-	pdfCmd.FParseErrWhitelist = cobra.FParseErrWhitelist{UnknownFlags: true}
-	findCmd.FParseErrWhitelist = cobra.FParseErrWhitelist{UnknownFlags: true}
+	// Disable cobra flag parsing for commands that parse flags manually.
+	// FParseErrWhitelist silently swallows unknown flags (dropping them from args),
+	// so we must disable cobra's parser entirely and let the action code handle flags.
+	snapCmd.DisableFlagParsing = true
+	screenshotCmd.DisableFlagParsing = true
+	pdfCmd.DisableFlagParsing = true
+	findCmd.DisableFlagParsing = true
+	navCmd.DisableFlagParsing = true
+	clickCmd.DisableFlagParsing = true
+	hoverCmd.DisableFlagParsing = true
+	textCmd.DisableFlagParsing = true
+	tabsCmd.DisableFlagParsing = true
 
 	uploadCmd.Flags().StringP("selector", "s", "", "CSS selector for file input")
 	downloadCmd.Flags().StringP("output", "o", "", "Save downloaded file to path")

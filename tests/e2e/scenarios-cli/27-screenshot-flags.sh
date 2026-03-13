@@ -3,7 +3,27 @@
 
 source "$(dirname "$0")/common.sh"
 
-# SKIP: screenshot -o/-q flags are consumed by cobra even with FParseErrWhitelist.
-# They need to be registered as proper cobra flags to reach the args slice.
-# The docker runner also has a read-only filesystem outside /tmp.
-# TODO: register -o, -q, --tab as cobra flags on screenshotCmd
+# ─────────────────────────────────────────────────────────────────
+start_test "pinchtab screenshot -o custom.jpg"
+
+pt_ok nav "${FIXTURES_URL}/index.html"
+pt_ok screenshot -o /tmp/e2e-custom-screenshot.jpg
+
+if [ -f /tmp/e2e-custom-screenshot.jpg ]; then
+  echo -e "  ${GREEN}✓${NC} file created"
+  ((ASSERTIONS_PASSED++)) || true
+  rm -f /tmp/e2e-custom-screenshot.jpg
+else
+  echo -e "  ${RED}✗${NC} file not created"
+  ((ASSERTIONS_FAILED++)) || true
+fi
+
+end_test
+
+# ─────────────────────────────────────────────────────────────────
+start_test "pinchtab screenshot -q 10"
+
+pt_ok screenshot -q 10 -o /tmp/e2e-lowq.jpg
+rm -f /tmp/e2e-lowq.jpg
+
+end_test

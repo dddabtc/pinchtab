@@ -1,37 +1,31 @@
 #!/bin/bash
-# 28-pdf-flags.sh — CLI pdf flags
+# 30-click-flags.sh — CLI click/hover flags (previously blocked by cobra)
 
 source "$(dirname "$0")/common.sh"
 
 # ─────────────────────────────────────────────────────────────────
-start_test "pinchtab pdf -o custom.pdf"
+start_test "pinchtab click --wait-nav"
 
 pt_ok nav "${FIXTURES_URL}/index.html"
-pt_ok pdf -o /tmp/e2e-custom.pdf
-
-if [ -f /tmp/e2e-custom.pdf ]; then
-  echo -e "  ${GREEN}✓${NC} file created"
-  ((ASSERTIONS_PASSED++)) || true
-  rm -f /tmp/e2e-custom.pdf
-else
-  echo -e "  ${RED}✗${NC} file not created"
-  ((ASSERTIONS_FAILED++)) || true
-fi
+pt_ok snap --interactive
+# Try click with --wait-nav; element may not be a link but flag should not cause cobra error
+pt click e0 --wait-nav
 
 end_test
 
 # ─────────────────────────────────────────────────────────────────
-start_test "pinchtab pdf --landscape"
+start_test "pinchtab click --css"
 
-pt_ok pdf --landscape -o /tmp/e2e-landscape.pdf
-rm -f /tmp/e2e-landscape.pdf
+pt_ok nav "${FIXTURES_URL}/form.html"
+pt_ok click --css "button[type=submit]"
 
 end_test
 
 # ─────────────────────────────────────────────────────────────────
-start_test "pinchtab pdf --scale 0.5"
+start_test "pinchtab hover (basic)"
 
-pt_ok pdf --scale 0.5 -o /tmp/e2e-scaled.pdf
-rm -f /tmp/e2e-scaled.pdf
+pt_ok nav "${FIXTURES_URL}/form.html"
+pt_ok snap
+pt_ok hover e0
 
 end_test
