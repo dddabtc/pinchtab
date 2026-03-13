@@ -178,7 +178,7 @@ var pdfCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
 		runCLIWith(cfg, func(client *http.Client, base, token string) {
-			browseractions.PDF(client, base, token, args)
+			browseractions.PDFWithFlags(client, base, token, cmd)
 		})
 	},
 }
@@ -287,7 +287,7 @@ func init() {
 	// so we must disable cobra's parser entirely and let the action code handle flags.
 	snapCmd.DisableFlagParsing = true
 	screenshotCmd.DisableFlagParsing = true
-	pdfCmd.DisableFlagParsing = true
+	// pdfCmd now uses proper cobra flags (see below)
 	findCmd.DisableFlagParsing = true
 	navCmd.DisableFlagParsing = true
 	clickCmd.DisableFlagParsing = true
@@ -297,6 +297,26 @@ func init() {
 
 	uploadCmd.Flags().StringP("selector", "s", "", "CSS selector for file input")
 	downloadCmd.Flags().StringP("output", "o", "", "Save downloaded file to path")
+
+	pdfCmd.Flags().StringP("output", "o", "", "Save PDF to file path")
+	pdfCmd.Flags().String("tab", "", "Tab ID")
+	pdfCmd.Flags().Bool("landscape", false, "Landscape orientation")
+	pdfCmd.Flags().String("scale", "", "Page scale (e.g. 0.5)")
+	pdfCmd.Flags().String("paper-width", "", "Paper width (inches)")
+	pdfCmd.Flags().String("paper-height", "", "Paper height (inches)")
+	pdfCmd.Flags().String("margin-top", "", "Top margin")
+	pdfCmd.Flags().String("margin-bottom", "", "Bottom margin")
+	pdfCmd.Flags().String("margin-left", "", "Left margin")
+	pdfCmd.Flags().String("margin-right", "", "Right margin")
+	pdfCmd.Flags().String("page-ranges", "", "Page ranges (e.g. 1-3)")
+	pdfCmd.Flags().Bool("prefer-css-page-size", false, "Use CSS page size")
+	pdfCmd.Flags().Bool("display-header-footer", false, "Show header/footer")
+	pdfCmd.Flags().String("header-template", "", "Header HTML template")
+	pdfCmd.Flags().String("footer-template", "", "Footer HTML template")
+	pdfCmd.Flags().Bool("generate-tagged-pdf", false, "Generate tagged PDF")
+	pdfCmd.Flags().Bool("generate-document-outline", false, "Generate document outline")
+	pdfCmd.Flags().Bool("file-output", false, "Use server-side file output")
+	pdfCmd.Flags().String("path", "", "Server-side output path")
 
 	rootCmd.AddCommand(quickCmd)
 	rootCmd.AddCommand(navCmd)
