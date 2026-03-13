@@ -239,6 +239,30 @@ var instanceCmd = &cobra.Command{
 	Short: "Manage browser instances",
 }
 
+var findCmd = &cobra.Command{
+	Use:   "find <query>",
+	Short: "Find elements by natural language query",
+	Args:  cobra.MinimumNArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		cfg := config.Load()
+		runCLIWith(cfg, func(client *http.Client, base, token string) {
+			browseractions.Find(client, base, token, args)
+		})
+	},
+}
+
+var selectCmd = &cobra.Command{
+	Use:   "select <ref> <value>",
+	Short: "Select option in dropdown",
+	Args:  cobra.ExactArgs(2),
+	Run: func(cmd *cobra.Command, args []string) {
+		cfg := config.Load()
+		runCLIWith(cfg, func(client *http.Client, base, token string) {
+			browseractions.Action(client, base, token, "select", args)
+		})
+	},
+}
+
 func init() {
 	quickCmd.GroupID = "browser"
 	navCmd.GroupID = "browser"
@@ -259,6 +283,13 @@ func init() {
 	profilesCmd.GroupID = "management"
 	downloadCmd.GroupID = "browser"
 	uploadCmd.GroupID = "browser"
+	findCmd.GroupID = "browser"
+	selectCmd.GroupID = "browser"
+
+	snapCmd.FParseErrWhitelist = cobra.FParseErrWhitelist{UnknownFlags: true}
+	screenshotCmd.FParseErrWhitelist = cobra.FParseErrWhitelist{UnknownFlags: true}
+	pdfCmd.FParseErrWhitelist = cobra.FParseErrWhitelist{UnknownFlags: true}
+	findCmd.FParseErrWhitelist = cobra.FParseErrWhitelist{UnknownFlags: true}
 
 	uploadCmd.Flags().StringP("selector", "s", "", "CSS selector for file input")
 	downloadCmd.Flags().StringP("output", "o", "", "Save downloaded file to path")
@@ -282,6 +313,8 @@ func init() {
 	rootCmd.AddCommand(profilesCmd)
 	rootCmd.AddCommand(downloadCmd)
 	rootCmd.AddCommand(uploadCmd)
+	rootCmd.AddCommand(findCmd)
+	rootCmd.AddCommand(selectCmd)
 
 	instanceCmd.GroupID = "management"
 	instanceCmd.AddCommand(&cobra.Command{
