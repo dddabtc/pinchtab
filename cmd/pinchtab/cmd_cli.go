@@ -305,7 +305,34 @@ func init() {
 	// clickCmd now uses proper cobra flags (see below)
 	// hoverCmd now uses proper cobra flags (see below)
 	// textCmd now uses proper cobra flags (see below)
-	tabsCmd.DisableFlagParsing = true
+	// tabsCmd: proper cobra subcommands for new/close
+	// Other tab operations (navigate, snapshot, etc.) use top-level commands with --tab flag
+	tabsCmd.AddCommand(&cobra.Command{
+		Use:   "new [url]",
+		Short: "Open a new tab",
+		Args:  cobra.MaximumNArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			cfg := config.Load()
+			runCLIWith(cfg, func(client *http.Client, base, token string) {
+				body := map[string]any{"action": "new"}
+				if len(args) > 0 {
+					body["url"] = args[0]
+				}
+				browseractions.TabNew(client, base, token, body)
+			})
+		},
+	})
+	tabsCmd.AddCommand(&cobra.Command{
+		Use:   "close <tabId>",
+		Short: "Close a tab",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			cfg := config.Load()
+			runCLIWith(cfg, func(client *http.Client, base, token string) {
+				browseractions.TabClose(client, base, token, args[0])
+			})
+		},
+	})
 
 	uploadCmd.Flags().StringP("selector", "s", "", "CSS selector for file input")
 	downloadCmd.Flags().StringP("output", "o", "", "Save downloaded file to path")
