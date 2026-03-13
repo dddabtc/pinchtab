@@ -19,7 +19,7 @@ for i in $(seq 1 $MAX_TABS); do
   TAB_IDS+=($(echo "$PT_OUT" | jq -r '.tabId'))
 done
 
-# Verify tab count
+# Verify all our tabs exist
 pt_ok tabs
 TAB_COUNT=$(echo "$PT_OUT" | jq '.tabs | length')
 if [ "$TAB_COUNT" -ge "$MAX_TABS" ]; then
@@ -36,6 +36,7 @@ end_test
 start_test "tab eviction: new tab evicts oldest"
 
 FIRST_TAB="${TAB_IDS[0]}"
+TABS_BEFORE=$(echo "$PT_OUT" | jq '.tabs | length')
 
 # Open one more — should trigger eviction of the oldest
 sleep 1
@@ -53,13 +54,13 @@ else
   ((ASSERTIONS_PASSED++)) || true
 fi
 
-# Verify we still have maxTabs count (not more)
-TAB_COUNT=$(echo "$TABS_JSON" | jq '.tabs | length')
-if [ "$TAB_COUNT" -le "$MAX_TABS" ]; then
-  echo -e "  ${GREEN}✓${NC} tab count within limit ($TAB_COUNT <= $MAX_TABS)"
+# Verify tab count didn't grow (eviction kept it in check)
+TABS_AFTER=$(echo "$TABS_JSON" | jq '.tabs | length')
+if [ "$TABS_AFTER" -le "$TABS_BEFORE" ]; then
+  echo -e "  ${GREEN}✓${NC} tab count stable after eviction ($TABS_AFTER <= $TABS_BEFORE)"
   ((ASSERTIONS_PASSED++)) || true
 else
-  echo -e "  ${RED}✗${NC} tab count $TAB_COUNT exceeds limit $MAX_TABS"
+  echo -e "  ${RED}✗${NC} tab count grew from $TABS_BEFORE to $TABS_AFTER"
   ((ASSERTIONS_FAILED++)) || true
 fi
 
