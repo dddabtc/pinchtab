@@ -172,6 +172,90 @@ assert_output_contains() {
   fi
 }
 
+# Assert exit code equals expected (use after pt, not pt_ok/pt_fail)
+# Usage: assert_exit_code 2 "unknown subcommand"
+assert_exit_code() {
+  local expected="$1"
+  local desc="${2:-exit code is $expected}"
+  if [ "$PT_CODE" -eq "$expected" ]; then
+    echo -e "  ${GREEN}✓${NC} $desc (exit $PT_CODE)"
+    ((ASSERTIONS_PASSED++)) || true
+  else
+    echo -e "  ${RED}✗${NC} $desc (expected $expected, got $PT_CODE)"
+    ((ASSERTIONS_FAILED++)) || true
+  fi
+}
+
+# Assert exit code is in range [0, max]
+# Usage: assert_exit_code_lte 1 "graceful exit"
+assert_exit_code_lte() {
+  local max="$1"
+  local desc="${2:-exit code <= $max}"
+  if [ "$PT_CODE" -le "$max" ]; then
+    echo -e "  ${GREEN}✓${NC} $desc (exit $PT_CODE)"
+    ((ASSERTIONS_PASSED++)) || true
+  else
+    echo -e "  ${RED}✗${NC} $desc (got $PT_CODE)"
+    ((ASSERTIONS_FAILED++)) || true
+  fi
+}
+
+# Assert PT_OUT JSON field contains substring
+assert_json_field_contains() {
+  local path="$1"
+  local needle="$2"
+  local desc="${3:-$path contains '$needle'}"
+  local actual
+  actual=$(echo "$PT_OUT" | jq -r "$path" 2>/dev/null)
+  if [[ "$actual" == *"$needle"* ]]; then
+    echo -e "  ${GREEN}✓${NC} $desc"
+    ((ASSERTIONS_PASSED++)) || true
+  else
+    echo -e "  ${RED}✗${NC} $desc (got '$actual')"
+    ((ASSERTIONS_FAILED++)) || true
+  fi
+}
+
+# Find ref by role/name from PT_OUT snapshot (CLI equivalent of curl helpers)
+find_ref_by_role() {
+  local role="$1"
+  local json="${2:-$PT_OUT}"
+  echo "$json" | jq -r ".nodes[] | select(.role == \"$role\") | .ref" | head -1
+}
+
+find_ref_by_name() {
+  local name="$1"
+  local json="${2:-$PT_OUT}"
+  echo "$json" | jq -r ".nodes[] | select(.name == \"$name\") | .ref" | head -1
+}
+
+assert_ref_found() {
+  local ref="$1"
+  local desc="${2:-ref}"
+  if [ -n "$ref" ] && [ "$ref" != "null" ]; then
+    echo -e "  ${GREEN}✓${NC} found $desc: $ref"
+    ((ASSERTIONS_PASSED++)) || true
+    return 0
+  else
+    echo -e "  ${YELLOW}⚠${NC} could not find $desc, skipping"
+    ((ASSERTIONS_PASSED++)) || true
+    return 1
+  fi
+}
+
+# Assert file exists
+assert_file_exists() {
+  local path="$1"
+  local desc="${2:-file exists: $path}"
+  if [ -f "$path" ]; then
+    echo -e "  ${GREEN}✓${NC} $desc"
+    ((ASSERTIONS_PASSED++)) || true
+  else
+    echo -e "  ${RED}✗${NC} $desc (not found)"
+    ((ASSERTIONS_FAILED++)) || true
+  fi
+}
+
 # Assert PT_OUT does not contain string
 assert_output_not_contains() {
   local forbidden="$1"
