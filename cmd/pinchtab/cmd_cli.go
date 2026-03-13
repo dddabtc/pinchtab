@@ -75,7 +75,7 @@ var screenshotCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
 		runCLIWith(cfg, func(client *http.Client, base, token string) {
-			browseractions.Screenshot(client, base, token, args)
+			browseractions.ScreenshotWithFlags(client, base, token, cmd)
 		})
 	},
 }
@@ -189,7 +189,7 @@ var textCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
 		runCLIWith(cfg, func(client *http.Client, base, token string) {
-			browseractions.Text(client, base, token, args)
+			browseractions.TextWithFlags(client, base, token, cmd)
 		})
 	},
 }
@@ -287,17 +287,21 @@ func init() {
 	// FParseErrWhitelist silently swallows unknown flags (dropping them from args),
 	// so we must disable cobra's parser entirely and let the action code handle flags.
 	snapCmd.DisableFlagParsing = true
-	screenshotCmd.DisableFlagParsing = true
+	// screenshotCmd now uses proper cobra flags (see below)
 	// pdfCmd now uses proper cobra flags (see below)
 	// findCmd now uses proper cobra flags (see below)
 	navCmd.DisableFlagParsing = true
 	clickCmd.DisableFlagParsing = true
 	hoverCmd.DisableFlagParsing = true
-	textCmd.DisableFlagParsing = true
+	// textCmd now uses proper cobra flags (see below)
 	tabsCmd.DisableFlagParsing = true
 
 	uploadCmd.Flags().StringP("selector", "s", "", "CSS selector for file input")
 	downloadCmd.Flags().StringP("output", "o", "", "Save downloaded file to path")
+
+	screenshotCmd.Flags().StringP("output", "o", "", "Save screenshot to file path")
+	screenshotCmd.Flags().StringP("quality", "q", "", "JPEG quality (0-100)")
+	screenshotCmd.Flags().String("tab", "", "Tab ID")
 
 	pdfCmd.Flags().StringP("output", "o", "", "Save PDF to file path")
 	pdfCmd.Flags().String("tab", "", "Tab ID")
@@ -323,6 +327,9 @@ func init() {
 	findCmd.Flags().String("threshold", "", "Minimum similarity score (0-1)")
 	findCmd.Flags().Bool("explain", false, "Show score breakdown")
 	findCmd.Flags().Bool("ref-only", false, "Output just the element ref")
+
+	textCmd.Flags().Bool("raw", false, "Raw extraction mode")
+	textCmd.Flags().String("tab", "", "Tab ID")
 
 	rootCmd.AddCommand(quickCmd)
 	rootCmd.AddCommand(navCmd)
