@@ -27,10 +27,11 @@ var quickCmd = &cobra.Command{
 var navCmd = &cobra.Command{
 	Use:   "nav <url>",
 	Short: "Navigate to URL",
+	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
 		runCLIWith(cfg, func(client *http.Client, base, token string) {
-			browseractions.Navigate(client, base, token, args)
+			browseractions.NavigateWithFlags(client, base, token, args[0], cmd)
 		})
 	},
 }
@@ -290,7 +291,7 @@ func init() {
 	// screenshotCmd now uses proper cobra flags (see below)
 	// pdfCmd now uses proper cobra flags (see below)
 	// findCmd now uses proper cobra flags (see below)
-	navCmd.DisableFlagParsing = true
+	// navCmd now uses proper cobra flags (see below)
 	clickCmd.DisableFlagParsing = true
 	hoverCmd.DisableFlagParsing = true
 	// textCmd now uses proper cobra flags (see below)
@@ -330,6 +331,10 @@ func init() {
 
 	textCmd.Flags().Bool("raw", false, "Raw extraction mode")
 	textCmd.Flags().String("tab", "", "Tab ID")
+
+	navCmd.Flags().Bool("new-tab", false, "Open in new tab")
+	navCmd.Flags().Bool("block-images", false, "Block image loading")
+	navCmd.Flags().Bool("block-ads", false, "Block ads")
 
 	rootCmd.AddCommand(quickCmd)
 	rootCmd.AddCommand(navCmd)

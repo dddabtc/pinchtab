@@ -3,6 +3,7 @@ package actions
 import (
 	"github.com/pinchtab/pinchtab/internal/cli"
 	"github.com/pinchtab/pinchtab/internal/cli/apiclient"
+	"github.com/spf13/cobra"
 	"net/http"
 )
 
@@ -20,6 +21,21 @@ func Navigate(client *http.Client, base, token string, args []string) {
 		case "--block-ads":
 			body["blockAds"] = true
 		}
+	}
+	result := apiclient.DoPost(client, base, token, "/navigate", body)
+	apiclient.SuggestNextAction("navigate", result)
+}
+
+func NavigateWithFlags(client *http.Client, base, token string, url string, cmd *cobra.Command) {
+	body := map[string]any{"url": url}
+	if v, _ := cmd.Flags().GetBool("new-tab"); v {
+		body["newTab"] = true
+	}
+	if v, _ := cmd.Flags().GetBool("block-images"); v {
+		body["blockImages"] = true
+	}
+	if v, _ := cmd.Flags().GetBool("block-ads"); v {
+		body["blockAds"] = true
 	}
 	result := apiclient.DoPost(client, base, token, "/navigate", body)
 	apiclient.SuggestNextAction("navigate", result)
