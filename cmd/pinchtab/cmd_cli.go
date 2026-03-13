@@ -197,6 +197,32 @@ var textCmd = &cobra.Command{
 	},
 }
 
+var downloadCmd = &cobra.Command{
+	Use:   "download <url>",
+	Short: "Download a file via browser session",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		output, _ := cmd.Flags().GetString("output")
+		cfg := config.Load()
+		runCLIWith(cfg, func(client *http.Client, base, token string) {
+			browseractions.Download(client, base, token, args, output)
+		})
+	},
+}
+
+var uploadCmd = &cobra.Command{
+	Use:   "upload <file-path>",
+	Short: "Upload a file to a file input element",
+	Args:  cobra.MinimumNArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		selector, _ := cmd.Flags().GetString("selector")
+		cfg := config.Load()
+		runCLIWith(cfg, func(client *http.Client, base, token string) {
+			browseractions.Upload(client, base, token, args, selector)
+		})
+	},
+}
+
 var profilesCmd = &cobra.Command{
 	Use:   "profiles",
 	Short: "List browser profiles",
@@ -231,6 +257,11 @@ func init() {
 	pdfCmd.GroupID = "browser"
 	textCmd.GroupID = "browser"
 	profilesCmd.GroupID = "management"
+	downloadCmd.GroupID = "browser"
+	uploadCmd.GroupID = "browser"
+
+	uploadCmd.Flags().StringP("selector", "s", "", "CSS selector for file input")
+	downloadCmd.Flags().StringP("output", "o", "", "Save downloaded file to path")
 
 	rootCmd.AddCommand(quickCmd)
 	rootCmd.AddCommand(navCmd)
@@ -249,6 +280,8 @@ func init() {
 	rootCmd.AddCommand(pdfCmd)
 	rootCmd.AddCommand(textCmd)
 	rootCmd.AddCommand(profilesCmd)
+	rootCmd.AddCommand(downloadCmd)
+	rootCmd.AddCommand(uploadCmd)
 
 	instanceCmd.GroupID = "management"
 	instanceCmd.AddCommand(&cobra.Command{
