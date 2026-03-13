@@ -190,5 +190,3 @@ Override the server port:
 ```bash
 PINCHTAB_PORT=9868 ./pinchtab
 ```
-
-

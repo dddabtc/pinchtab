@@ -309,4 +309,3 @@ The durable object in PinchTab is the **profile**.
 The runtime object is the **instance**.
 The page object is the **tab**.
 The **server** manages them, and the **bridge** executes them.
-

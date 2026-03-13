@@ -23,7 +23,7 @@ RUN go build -ldflags="-s -w" -o pinchtab ./cmd/pinchtab
 
 # Stage 3: Minimal runtime image with Chromium.
 # Only the compiled binary and entrypoint script are copied in.
-# 
+#
 # Security model:
 # - Chrome runs with --no-sandbox (set by entrypoint) because containers don't
 #   have user namespaces for sandboxing

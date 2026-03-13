@@ -15,7 +15,7 @@ var version = "dev"
 var rootCmd = &cobra.Command{
 	Use:   "pinchtab",
 	Short: "PinchTab - Browser control for AI agents",
-	Long: `PinchTab provides a lightweight, API-driven way for AI agents to control 
+	Long: `PinchTab provides a lightweight, API-driven way for AI agents to control
 browsers, manage tabs, and perform interactive tasks.`,
 	Example: `  pinchtab server
   pinchtab nav https://pinchtab.com`,

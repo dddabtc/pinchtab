@@ -109,18 +109,18 @@ end_test() {
 pt() {
   local tmpout=$(mktemp)
   local tmperr=$(mktemp)
-  
+
   echo -e "  ${BLUE}→ PINCHTAB_URL=$PINCHTAB_URL pinchtab $@${NC}"
-  
+
   set +e
   PINCHTAB_URL="$PINCHTAB_URL" pinchtab "$@" > "$tmpout" 2> "$tmperr"
   PT_CODE=$?
   set -e
-  
+
   PT_OUT=$(cat "$tmpout")
   PT_ERR=$(cat "$tmperr")
   rm -f "$tmpout" "$tmperr"
-  
+
   if [ -n "$PT_OUT" ]; then
     echo "$PT_OUT" | head -5
   fi
@@ -161,7 +161,7 @@ pt_fail() {
 assert_output_contains() {
   local expected="$1"
   local desc="${2:-output contains '$expected'}"
-  
+
   if echo "$PT_OUT" | grep -q "$expected"; then
     echo -e "  ${GREEN}✓${NC} $desc"
     ((ASSERTIONS_PASSED++)) || true
@@ -260,7 +260,7 @@ assert_file_exists() {
 assert_output_not_contains() {
   local forbidden="$1"
   local desc="${2:-output does not contain '$forbidden'}"
-  
+
   if echo "$PT_OUT" | grep -q "$forbidden"; then
     echo -e "  ${RED}✗${NC} $desc"
     echo -e "  ${RED}  output was: $PT_OUT${NC}"
@@ -274,7 +274,7 @@ assert_output_not_contains() {
 # Assert PT_OUT is valid JSON
 assert_output_json() {
   local desc="${1:-output is valid JSON}"
-  
+
   if echo "$PT_OUT" | jq . > /dev/null 2>&1; then
     echo -e "  ${GREEN}✓${NC} $desc"
     ((ASSERTIONS_PASSED++)) || true
@@ -290,10 +290,10 @@ assert_json_field() {
   local path="$1"
   local expected="$2"
   local desc="${3:-$path equals '$expected'}"
-  
+
   local actual
   actual=$(echo "$PT_OUT" | jq -r "$path" 2>/dev/null)
-  
+
   if [ "$actual" = "$expected" ]; then
     echo -e "  ${GREEN}✓${NC} $desc"
     ((ASSERTIONS_PASSED++)) || true

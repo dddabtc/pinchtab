@@ -48,7 +48,7 @@ missing_files=()
 # Check each file exists
 for file in $files; do
     full_path="$DOCS_DIR/$file"
-    
+
     if [ ! -f "$full_path" ]; then
         missing_files+=("$file")
     fi

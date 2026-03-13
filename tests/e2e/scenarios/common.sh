@@ -86,7 +86,7 @@ start_test() {
 end_test() {
   local end_time=$(get_time_ms)
   local duration=$((end_time - TEST_START_TIME))
-  
+
   if [ "$ASSERTIONS_FAILED" -eq 0 ]; then
     echo -e "${GREEN}✓ ${CURRENT_TEST} passed${NC} ${MUTED}(${duration}ms)${NC}\n"
     TEST_RESULTS+=("✅ ${CURRENT_TEST}|${duration}ms|passed")
@@ -106,10 +106,10 @@ assert_json_eq() {
   local path="$2"
   local expected="$3"
   local desc="${4:-$path = $expected}"
-  
+
   local actual
   actual=$(echo "$json" | jq -r "$path")
-  
+
   if [ "$actual" = "$expected" ]; then
     echo -e "  ${GREEN}✓${NC} $desc"
     ((ASSERTIONS_PASSED++)) || true
@@ -125,10 +125,10 @@ assert_json_contains() {
   local path="$2"
   local needle="$3"
   local desc="${4:-$path contains '$needle'}"
-  
+
   local actual
   actual=$(echo "$json" | jq -r "$path")
-  
+
   if [[ "$actual" == *"$needle"* ]]; then
     echo -e "  ${GREEN}✓${NC} $desc"
     ((ASSERTIONS_PASSED++)) || true
@@ -144,10 +144,10 @@ assert_json_length() {
   local path="$2"
   local expected="$3"
   local desc="${4:-$path length = $expected}"
-  
+
   local actual
   actual=$(echo "$json" | jq "$path | length")
-  
+
   if [ "$actual" -eq "$expected" ]; then
     echo -e "  ${GREEN}✓${NC} $desc"
     ((ASSERTIONS_PASSED++)) || true
@@ -163,10 +163,10 @@ assert_json_length_gte() {
   local path="$2"
   local expected="$3"
   local desc="${4:-$path length >= $expected}"
-  
+
   local actual
   actual=$(echo "$json" | jq "$path | length")
-  
+
   if [ "$actual" -ge "$expected" ]; then
     echo -e "  ${GREEN}✓${NC} $desc"
     ((ASSERTIONS_PASSED++)) || true
@@ -181,7 +181,7 @@ assert_json_exists() {
   local json="$1"
   local path="$2"
   local desc="${3:-$path exists}"
-  
+
   if echo "$json" | jq -e "$path" >/dev/null 2>&1; then
     echo -e "  ${GREEN}✓${NC} $desc"
     ((ASSERTIONS_PASSED++)) || true
@@ -196,7 +196,7 @@ assert_contains() {
   local haystack="$1"
   local needle="$2"
   local desc="${3:-contains '$needle'}"
-  
+
   if echo "$haystack" | grep -q "$needle"; then
     echo -e "  ${GREEN}✓${NC} $desc"
     ((ASSERTIONS_PASSED++)) || true
@@ -249,10 +249,10 @@ assert_http_error() {
   local expected_status="$1"
   local error_pattern="${2:-error}"
   local desc="${3:-HTTP $expected_status error}"
-  
+
   local actual_status
   actual_status=$(echo "$RESULT" | jq -r '.status // empty')
-  
+
   if [ "$actual_status" = "$expected_status" ] || grep -q "$error_pattern" <<< "$RESULT"; then
     echo -e "  ${GREEN}✓${NC} $desc"
     ((ASSERTIONS_PASSED++)) || true
@@ -268,7 +268,7 @@ assert_contains_any() {
   local haystack="$1"
   local patterns="$2"  # pipe-separated
   local desc="${3:-contains expected pattern}"
-  
+
   if echo "$haystack" | grep -qE "$patterns"; then
     echo -e "  ${GREEN}✓${NC} $desc"
     ((ASSERTIONS_PASSED++)) || true
@@ -383,7 +383,7 @@ pt_post_raw() {
 assert_url_accessible() {
   local url="$1"
   local label="${2:-$url}"
-  
+
   if curl -sf "$url" > /dev/null 2>&1; then
     echo -e "  ${GREEN}✓${NC} GET $label"
     ((ASSERTIONS_PASSED++)) || true
@@ -412,7 +412,7 @@ assert_fixtures_accessible() {
 # Assert last request returned expected status (uses $HTTP_STATUS from pinchtab())
 assert_ok() {
   local label="${1:-request}"
-  
+
   if [ "$HTTP_STATUS" = "200" ] || [ "$HTTP_STATUS" = "201" ]; then
     echo -e "  ${GREEN}✓${NC} $label → $HTTP_STATUS"
     ((ASSERTIONS_PASSED++)) || true
@@ -426,7 +426,7 @@ assert_ok() {
 assert_http_status() {
   local expected="$1"
   local label="${2:-request}"
-  
+
   if [ "$HTTP_STATUS" = "$expected" ]; then
     echo -e "  ${GREEN}✓${NC} $label → $HTTP_STATUS"
     ((ASSERTIONS_PASSED++)) || true
@@ -439,7 +439,7 @@ assert_http_status() {
 # Assert last request returned non-200 status (error expected)
 assert_not_ok() {
   local label="${1:-request}"
-  
+
   if [ "$HTTP_STATUS" != "200" ] && [ "$HTTP_STATUS" != "201" ]; then
     echo -e "  ${GREEN}✓${NC} $label → $HTTP_STATUS (error expected)"
     ((ASSERTIONS_PASSED++)) || true
@@ -458,7 +458,7 @@ click_button() {
   local name="$1"
   local ref
   ref=$(echo "$RESULT" | jq -r ".nodes[] | select(.name == \"$name\") | .ref" | head -1)
-  
+
   if [ -n "$ref" ] && [ "$ref" != "null" ]; then
     pt_post /action "{\"kind\":\"click\",\"ref\":\"${ref}\"}" > /dev/null
     echo -e "  ${GREEN}✓${NC} clicked '$name' (ref: $ref)"
@@ -475,12 +475,12 @@ type_into() {
   local text="$2"
   local ref
   ref=$(echo "$RESULT" | jq -r ".nodes[] | select(.name == \"$name\") | .ref" | head -1)
-  
+
   # Fallback to textbox role if name not found
   if [ -z "$ref" ] || [ "$ref" = "null" ]; then
     ref=$(echo "$RESULT" | jq -r '.nodes[] | select(.role == "textbox") | .ref' | head -1)
   fi
-  
+
   if [ -n "$ref" ] && [ "$ref" != "null" ]; then
     pt_post /action "{\"kind\":\"type\",\"ref\":\"${ref}\",\"text\":\"${text}\"}" > /dev/null
     echo -e "  ${GREEN}✓${NC} typed '$text' into '$name' (ref: $ref)"
@@ -543,7 +543,7 @@ show_tab() {
 assert_tab_count() {
   local expected="$1"
   local actual=$(get_tab_count)
-  
+
   if [ "$actual" -eq "$expected" ]; then
     echo -e "  ${GREEN}✓${NC} tab count = $actual"
     ((ASSERTIONS_PASSED++)) || true
@@ -557,7 +557,7 @@ assert_tab_count() {
 assert_tab_count_gte() {
   local min="$1"
   local actual=$(get_tab_count)
-  
+
   if [ "$actual" -ge "$min" ]; then
     echo -e "  ${GREEN}✓${NC} tab count $actual >= $min"
     ((ASSERTIONS_PASSED++)) || true
@@ -571,7 +571,7 @@ assert_tab_count_gte() {
 assert_tab_closed() {
   local before="$1"
   local actual=$(get_tab_count)
-  
+
   if [ "$actual" -lt "$before" ]; then
     echo -e "  ${GREEN}✓${NC} tab closed (before: $before, after: $actual)"
     ((ASSERTIONS_PASSED++)) || true
@@ -660,13 +660,13 @@ assert_buttons_page() {
   local snap="$1"
   local expected_buttons=("Increment" "Decrement" "Reset")
   local found=0
-  
+
   for btn in "${expected_buttons[@]}"; do
     if echo "$snap" | jq -e ".nodes[] | select(.name == \"$btn\")" > /dev/null 2>&1; then
       ((found++))
     fi
   done
-  
+
   if [ "$found" -ge 3 ]; then
     echo -e "  ${GREEN}✓${NC} buttons.html: found $found/3 expected buttons"
     ((ASSERTIONS_PASSED++)) || true
@@ -680,17 +680,17 @@ assert_buttons_page() {
 assert_form_page() {
   local snap="$1"
   local checks=0
-  
+
   # Check for textboxes (username, email)
   local textboxes=$(echo "$snap" | jq '[.nodes[] | select(.role == "textbox")] | length')
   [ "$textboxes" -ge 2 ] && ((checks++))
-  
+
   # Check for Submit button
   echo "$snap" | jq -e '.nodes[] | select(.name == "Submit")' > /dev/null 2>&1 && ((checks++))
-  
+
   # Check for combobox (country select)
   echo "$snap" | jq -e '.nodes[] | select(.role == "combobox")' > /dev/null 2>&1 && ((checks++))
-  
+
   if [ "$checks" -ge 3 ]; then
     echo -e "  ${GREEN}✓${NC} form.html: found inputs, submit button, and select"
     ((ASSERTIONS_PASSED++)) || true
@@ -704,11 +704,11 @@ assert_form_page() {
 assert_table_page() {
   local text="$1"
   local checks=0
-  
+
   echo "$text" | grep -q "Alice Johnson" && ((checks++))
   echo "$text" | grep -q "bob@example.com" && ((checks++))
   echo "$text" | grep -q "Active" && ((checks++))
-  
+
   if [ "$checks" -ge 3 ]; then
     echo -e "  ${GREEN}✓${NC} table.html: found expected table data"
     ((ASSERTIONS_PASSED++)) || true
@@ -721,7 +721,7 @@ assert_table_page() {
 # index.html: Welcome header
 assert_index_page() {
   local snap="$1"
-  
+
   if echo "$snap" | jq -e '.title' | grep -q "E2E Test"; then
     echo -e "  ${GREEN}✓${NC} index.html: correct title"
     ((ASSERTIONS_PASSED++)) || true
@@ -735,7 +735,7 @@ assert_index_page() {
 print_summary() {
   local total=$((TESTS_PASSED + TESTS_FAILED))
   local total_time=0
-  
+
   echo ""
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo -e "${BLUE}E2E Test Summary${NC}"
@@ -754,7 +754,7 @@ print_summary() {
 
   printf "  %-${name_width}s %10s %10s\n" "Test" "Duration" "Status"
   echo "  ${separator}"
-  
+
   for result in "${TEST_RESULTS[@]}"; do
     IFS='|' read -r name duration status <<< "$result"
     local time_num=${duration%ms}
@@ -765,7 +765,7 @@ print_summary() {
       printf "  %-${name_width}s %10s ${RED}%10s${NC}\n" "$name" "$duration" "✗"
     fi
   done
-  
+
   echo "  ${separator}"
   printf "  %-${name_width}s %10s\n" "Total" "${total_time}ms"
   echo ""
@@ -773,7 +773,7 @@ print_summary() {
   echo -e "  ${RED}Failed:${NC} ${TESTS_FAILED}/${total}"
   echo ""
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  
+
   # Generate markdown report for CI
   if [ -d "${RESULTS_DIR:-}" ]; then
     generate_markdown_report > "${RESULTS_DIR}/report.md"
@@ -782,7 +782,7 @@ print_summary() {
     echo "total_time=${total_time}ms" >> "${RESULTS_DIR}/summary.txt"
     echo "timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "${RESULTS_DIR}/summary.txt"
   fi
-  
+
   if [ "$TESTS_FAILED" -gt 0 ]; then
     exit 1
   fi
@@ -792,7 +792,7 @@ print_summary() {
 generate_markdown_report() {
   local total=$((TESTS_PASSED + TESTS_FAILED))
   local total_time=0
-  
+
   echo "## 🦀 PinchTab E2E Test Report"
   echo ""
   if [ "$TESTS_FAILED" -eq 0 ]; then
@@ -803,7 +803,7 @@ generate_markdown_report() {
   echo ""
   echo "| Test | Duration | Status |"
   echo "|------|----------|--------|"
-  
+
   for result in "${TEST_RESULTS[@]}"; do
     IFS='|' read -r name duration status <<< "$result"
     local time_num=${duration%ms}
@@ -815,7 +815,7 @@ generate_markdown_report() {
     clean_name="${clean_name#❌ }"
     echo "| ${clean_name} | ${duration} | ${icon} |"
   done
-  
+
   echo ""
   echo "**Summary:** ${TESTS_PASSED}/${total} passed in ${total_time}ms"
   echo ""

@@ -141,4 +141,3 @@ Prefer explicit instance APIs when:
 - you want separate headed and headless browsers at the same time
 - you need stable profile-to-instance ownership rules
 - you are building tooling that should never depend on implicit auto-launch
-

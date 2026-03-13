@@ -22,4 +22,3 @@ Useful flags:
 
 - [Text](./text.md)
 - [Screenshot](./screenshot.md)
-

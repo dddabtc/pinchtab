@@ -109,7 +109,7 @@ check_npm() {
 check_chrome() {
     local chrome_found=false
     local chrome_path=""
-    
+
     # Check common Chrome/Chromium locations
     local candidates=(
         "google-chrome"
@@ -123,7 +123,7 @@ check_chrome() {
         "/usr/bin/chromium"
         "/usr/bin/chromium-browser"
     )
-    
+
     for candidate in "${candidates[@]}"; do
         if command -v "$candidate" &> /dev/null || [[ -f "$candidate" ]]; then
             chrome_found=true
@@ -131,7 +131,7 @@ check_chrome() {
             break
         fi
     done
-    
+
     if [[ "$chrome_found" == true ]]; then
         ui_success "Chrome/Chromium found: $chrome_path"
     else
@@ -165,7 +165,7 @@ check_chrome() {
 
 install_pinchtab() {
     ui_section "Installing Pinchtab"
-    
+
     if npm install -g pinchtab > "$LOGFILE" 2>&1; then
         ui_success "Pinchtab installed successfully"
         return 0
@@ -173,7 +173,7 @@ install_pinchtab() {
         local exit_code=$?
         ui_error "npm install failed"
         echo ""
-        
+
         # Check for permission error
         if grep -q "EACCES\|permission denied" "$LOGFILE"; then
             echo "This is a permission error. Try one of these:"
@@ -233,7 +233,7 @@ show_next_steps() {
 main() {
     print_banner
     setup_logfile
-    
+
     detect_os
     check_node
     check_npm
@@ -241,7 +241,7 @@ main() {
     install_pinchtab
     verify_installation
     show_next_steps
-    
+
     ui_section "Installation complete!"
     echo -e "Run ${ACCENT}${BOLD}pinchtab${NC} to start 🦀"
     echo ""

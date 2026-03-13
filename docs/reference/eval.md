@@ -23,4 +23,3 @@ Notes:
 
 - [Config](./config.md)
 - [Tabs](./tabs.md)
-

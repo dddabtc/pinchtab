@@ -26,4 +26,3 @@ Notes:
 
 - [Snapshot](./snapshot.md)
 - [Text](./text.md)
-

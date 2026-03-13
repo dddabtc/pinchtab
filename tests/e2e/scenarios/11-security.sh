@@ -70,7 +70,7 @@ assert_contains "$RESULT" "download_disabled" "correct error code"
 end_test
 
 # ═══════════════════════════════════════════════════════════════════
-# UPLOAD SECURITY  
+# UPLOAD SECURITY
 # ═══════════════════════════════════════════════════════════════════
 
 start_test "security: upload ALLOWED when enabled"

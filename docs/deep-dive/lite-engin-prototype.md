@@ -1,8 +1,8 @@
 # Lite Engine: Chrome-Free DOM Capture using Gost-DOM
 
-**Branch:** `feat/lite-engine-gostdom`  
-**Issue:** [#201](https://github.com/pinchtab/pinchtab/issues/201)  
-**Related Draft PR:** [#200](https://github.com/pinchtab/pinchtab/pull/200)  
+**Branch:** `feat/lite-engine-gostdom`
+**Issue:** [#201](https://github.com/pinchtab/pinchtab/issues/201)
+**Related Draft PR:** [#200](https://github.com/pinchtab/pinchtab/pull/200)
 **Dependency:** [gost-dom/browser v0.11.0](https://github.com/gost-dom/browser) (MIT, ~255 stars, Go 78.4%)
 
 ---
@@ -226,7 +226,7 @@ Lite-served responses include `X-Engine: lite` header for observability.
 
 ## Performance Benchmark: Lite vs Chrome
 
-**Lite run:** 2026-03-09 | **Chrome run:** 2026-03-09  
+**Lite run:** 2026-03-09 | **Chrome run:** 2026-03-09
 **Method:** 8 real-world websites × 4 operations each (Navigate → Snapshot All → Snapshot Interactive → Text)
 
 ### Response Times (ms)

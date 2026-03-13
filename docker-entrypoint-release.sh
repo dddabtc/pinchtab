@@ -19,7 +19,7 @@ if [ -z "${PINCHTAB_CONFIG:-}" ] && [ ! -f "$default_config_path" ]; then
 fi
 
 # RUNTIME BIND OVERRIDE FOR DOCKER PORT PUBLISHING
-# 
+#
 # The persisted config stores bind: "127.0.0.1" (secure loopback default).
 # But Docker port publishing requires the process to listen on 0.0.0.0 inside
 # the container, so the host can forward traffic to it.

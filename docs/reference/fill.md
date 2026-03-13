@@ -26,4 +26,3 @@ Notes:
 
 - [Type](./type.md)
 - [Snapshot](./snapshot.md)
-

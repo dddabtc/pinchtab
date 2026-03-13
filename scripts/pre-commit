@@ -11,7 +11,7 @@ echo "🔍 Running pre-commit checks..."
 staged_go=$(git diff --cached --name-only --diff-filter=ACM | grep '\.go$' || true)
 if [ -n "$staged_go" ]; then
   echo "📦 Checking Go files..."
-  
+
   # gofmt check
   unformatted=$(gofmt -l $staged_go 2>/dev/null || true)
   if [ -n "$unformatted" ]; then
@@ -31,7 +31,7 @@ if [ -n "$staged_go" ]; then
   else
     echo "⚠️  golangci-lint not found, skipping Go lint"
   fi
-  
+
   echo "✅ Go checks passed"
 fi
 
@@ -41,9 +41,9 @@ fi
 staged_web=$(git diff --cached --name-only --diff-filter=ACM | grep '^dashboard/.*\.\(ts\|tsx\|js\|jsx\|css\)$' || true)
 if [ -n "$staged_web" ]; then
   echo "🌐 Checking dashboard files..."
-  
+
   cd dashboard
-  
+
   # Check if bun is available
   if ! command -v bun &>/dev/null; then
     echo "⚠️  bun not found, skipping dashboard checks"
@@ -56,7 +56,7 @@ if [ -n "$staged_web" ]; then
       cd ..
       exit 1
     fi
-    
+
     # ESLint check
     echo "  → ESLint..."
     if ! bun run lint 2>/dev/null; then
@@ -64,7 +64,7 @@ if [ -n "$staged_web" ]; then
       cd ..
       exit 1
     fi
-    
+
     # Prettier check (on staged files only)
     echo "  → Prettier..."
     staged_rel=$(echo "$staged_web" | sed 's|^dashboard/||')
@@ -74,7 +74,7 @@ if [ -n "$staged_web" ]; then
       cd ..
       exit 1
     fi
-    
+
     cd ..
     echo "✅ Dashboard checks passed"
   fi

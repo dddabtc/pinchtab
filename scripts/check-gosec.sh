@@ -57,7 +57,7 @@ if [ "$ISSUES" -gt 0 ]; then
   exit 1
 else
   echo "✅ No critical issues (CI will pass)"
-  
+
   TOTAL=$(cat gosec-results.json | jq '.Stats.found')
   if [ "$TOTAL" -gt 0 ]; then
     echo ""

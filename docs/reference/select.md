@@ -23,4 +23,3 @@ The `value` should match the option value expected by the page.
 
 - [Snapshot](./snapshot.md)
 - [Focus](./focus.md)
-

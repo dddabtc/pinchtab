@@ -127,4 +127,3 @@ This is usually closer to “what the OS sees” than to a narrow JavaScript hea
 ### Numbers Do Not Match Activity Monitor Or Task Manager Exactly
 
 Different tools report different memory definitions. PinchTab currently reports RSS-based totals for the Chrome process tree it owns.
-

@@ -23,4 +23,3 @@ Use this when menus or tooltips appear only after hover.
 
 - [Click](./click.md)
 - [Snapshot](./snapshot.md)
-

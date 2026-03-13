@@ -24,4 +24,3 @@ Useful flags:
 
 - [Snapshot](./snapshot.md)
 - [PDF](./pdf.md)
-

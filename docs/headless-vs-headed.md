@@ -244,4 +244,3 @@ Useful views:
 - Use **headless** for unattended automation and scale.
 - Use **headed** for local debugging and human-visible workflows.
 - Choose the mode per instance, not per server.
-

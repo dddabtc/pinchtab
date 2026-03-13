@@ -223,4 +223,3 @@ pinchtab instance start
 ### No live profile preview
 
 The profile must have a running instance before the Live tab in the profile details modal can show live tab data.
-

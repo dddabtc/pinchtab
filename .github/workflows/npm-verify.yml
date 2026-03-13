@@ -90,9 +90,9 @@ jobs:
             "bin/pinchtab"
             "LICENSE"
           )
-          
+
           PACK_OUTPUT=$(npm pack --dry-run 2>&1)
-          
+
           for file in "${REQUIRED[@]}"; do
             if echo "$PACK_OUTPUT" | grep -q "$file"; then
               echo "✅ $file"
@@ -120,7 +120,7 @@ jobs:
               { name: 'postinstall script', value: !!pkg.scripts.postinstall },
               { name: 'bin.pinchtab', value: !!pkg.bin.pinchtab }
             ];
-            
+
             let failed = false;
             checks.forEach(check => {
               if (check.value) {
@@ -130,7 +130,7 @@ jobs:
                 failed = true;
               }
             });
-            
+
             if (failed) process.exit(1);
           "
 

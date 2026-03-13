@@ -244,7 +244,7 @@ pick_with_select() {
 if [ $# -gt 0 ]; then
   case "$1" in
     -h|--help|help) show_help; exit 0 ;;
-    -i|--interactive) 
+    -i|--interactive)
       if command -v gum &>/dev/null; then pick_with_gum; else pick_with_select; fi
       exit 0
       ;;

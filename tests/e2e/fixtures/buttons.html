@@ -11,7 +11,7 @@
 </head>
 <body>
   <h1>Buttons Test</h1>
-  
+
   <section id="counter-section">
     <h2>Counter</h2>
     <div class="counter">Count: <span id="count">0</span></div>
@@ -39,27 +39,27 @@
   <script>
     let count = 0;
     const countEl = document.getElementById('count');
-    
+
     document.getElementById('increment').addEventListener('click', () => {
       count++;
       countEl.textContent = count;
     });
-    
+
     document.getElementById('decrement').addEventListener('click', () => {
       count--;
       countEl.textContent = count;
     });
-    
+
     document.getElementById('reset').addEventListener('click', () => {
       count = 0;
       countEl.textContent = count;
     });
-    
+
     document.getElementById('toggle-btn').addEventListener('click', () => {
       const content = document.getElementById('toggle-content');
       content.style.display = content.style.display === 'none' ? 'block' : 'none';
     });
-    
+
     document.getElementById('show-message').addEventListener('click', () => {
       document.getElementById('message').style.display = 'block';
     });

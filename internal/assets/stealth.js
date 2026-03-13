@@ -13,9 +13,9 @@ const seededRandom = (function() {
   };
 })();
 
-Object.defineProperty(navigator, 'webdriver', { 
+Object.defineProperty(navigator, 'webdriver', {
   get: () => undefined,
-  configurable: true 
+  configurable: true
 });
 
 delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
@@ -150,7 +150,7 @@ if (window.RTCPeerConnection) {
 
 const __pinchtab_origGetTimezoneOffset = Date.prototype.getTimezoneOffset;
 Object.defineProperty(Date.prototype, 'getTimezoneOffset', {
-  value: function() { 
+  value: function() {
     return window.__pinchtab_timezone || __pinchtab_origGetTimezoneOffset.call(this);
   }
 });

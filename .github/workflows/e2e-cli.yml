@@ -56,25 +56,25 @@ jobs:
             --abort-on-container-exit \
             --exit-code-from runner 2>&1 | tee e2e-output.log
           EXIT_CODE=${PIPESTATUS[0]}
-          
+
           # Extract summary from logs
           PASSED=$(grep -oP 'Passed:\s*\K\d+' e2e-output.log | tail -1 || echo "0")
           FAILED=$(grep -oP 'Failed:\s*\K\d+' e2e-output.log | tail -1 || echo "0")
-          
+
           # Get failed test names if any
           FAILURES=$(grep -E '✗.*failed' e2e-output.log | sed 's/.*✗ /- /' | head -10 || true)
-          
+
           echo "passed=$PASSED" >> $GITHUB_OUTPUT
           echo "failed=$FAILED" >> $GITHUB_OUTPUT
           echo "exit_code=$EXIT_CODE" >> $GITHUB_OUTPUT
-          
+
           # Save failures for multiline output
           {
             echo 'failures<<EOF'
             echo "$FAILURES"
             echo 'EOF'
           } >> $GITHUB_OUTPUT
-          
+
           exit $EXIT_CODE
 
       - name: Copy results from container
@@ -108,7 +108,7 @@ jobs:
           PASSED="${{ steps.e2e.outputs.passed }}"
           FAILED="${{ steps.e2e.outputs.failed }}"
           FAILURES="${{ steps.e2e.outputs.failures }}"
-          
+
           if [ "$FAILED" = "0" ] || [ -z "$FAILED" ]; then
             echo "::notice title=CLI E2E Tests::✅ ${PASSED:-All} tests passed"
           else

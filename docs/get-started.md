@@ -168,4 +168,3 @@ CHROME_BIN=/path/to/chrome pinchtab
 
 - [GitHub Issues](https://github.com/pinchtab/pinchtab/issues)
 - [GitHub Discussions](https://github.com/pinchtab/pinchtab/discussions)
-

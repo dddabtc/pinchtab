@@ -67,4 +67,3 @@ Notes:
 - [Tabs](./tabs.md)
 - [Navigate](./navigate.md)
 - [Strategies](./strategies.md)
-

@@ -18,7 +18,7 @@ Go to **Settings → Secrets and variables → Actions** and add:
 - **NPM_TOKEN** — npm authentication token
   - Create at https://npmjs.com/settings/~/tokens
   - Scope: `automation` (publish + read)
-  
+
 - **DOCKERHUB_USER** — Docker Hub username (if using Docker Hub)
 - **DOCKERHUB_TOKEN** — Docker Hub personal access token
 

@@ -188,4 +188,3 @@ Removing the PinchTab data directory deletes:
 - local configuration
 
 Back up the profile directories first if you need to preserve logged-in browser sessions.
-

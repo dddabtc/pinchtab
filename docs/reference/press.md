@@ -23,4 +23,3 @@ Common keys include `Enter`, `Tab`, and `Escape`.
 
 - [Click](./click.md)
 - [Focus](./focus.md)
-
