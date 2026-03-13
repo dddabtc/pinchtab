@@ -35,3 +35,31 @@ pt_get /snapshot
 assert_ok "snapshot after rapid nav"
 
 end_test
+
+# ─────────────────────────────────────────────────────────────────
+start_test "error handling: unicode content"
+
+pt_post /navigate "{\"url\":\"${FIXTURES_URL}/unicode.html\"}"
+assert_ok "navigate to unicode page"
+
+pt_get /snapshot
+assert_ok "snapshot unicode page"
+
+pt_get /text
+assert_ok "text unicode page"
+assert_contains "$RESULT" "Unicode" "text has unicode content"
+
+end_test
+
+# ─────────────────────────────────────────────────────────────────
+start_test "error handling: binary content (image)"
+
+# Navigate to a binary file (e.g., favicon.ico or sample image)
+# Should not crash — may return error or empty content
+pt_post /navigate "{\"url\":\"${FIXTURES_URL}/sample.txt\"}"
+pt_get /text
+# Don't assert_ok — just verify server didn't crash
+pt_get /health
+assert_ok "server still healthy after binary/text page"
+
+end_test

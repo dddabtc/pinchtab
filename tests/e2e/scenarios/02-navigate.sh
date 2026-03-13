@@ -51,8 +51,8 @@ end_test
 # ─────────────────────────────────────────────────────────────────
 start_test "navigate: timeout parameter"
 
-# Navigate with a generous timeout (in seconds) — should succeed
-pt_post /navigate -d "{\"url\":\"${FIXTURES_URL}/index.html\",\"timeout\":10}"
+# Navigate with a generous timeout (in milliseconds) — should succeed
+pt_post /navigate -d "{\"url\":\"${FIXTURES_URL}/index.html\",\"timeout\":30000}"
 assert_ok "navigate with custom timeout"
 
 end_test

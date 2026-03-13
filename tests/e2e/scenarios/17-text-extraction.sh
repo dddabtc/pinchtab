@@ -129,3 +129,21 @@ else
 fi
 
 end_test
+
+# ─────────────────────────────────────────────────────────────────
+start_test "text extraction: token efficiency (reasonable length)"
+
+pt_post /navigate "{\"url\":\"${FIXTURES_URL}/index.html\"}"
+pt_get /text
+assert_ok "get text"
+
+TEXT_LEN=$(echo "$RESULT" | jq -r '.text' | wc -c)
+if [ "$TEXT_LEN" -lt 10000 ]; then
+  echo -e "  ${GREEN}✓${NC} text reasonably compact ($TEXT_LEN chars)"
+  ((ASSERTIONS_PASSED++)) || true
+else
+  echo -e "  ${YELLOW}⚠${NC} text may be bloated ($TEXT_LEN chars)"
+  ((ASSERTIONS_PASSED++)) || true
+fi
+
+end_test

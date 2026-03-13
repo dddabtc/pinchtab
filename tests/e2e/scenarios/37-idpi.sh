@@ -281,3 +281,9 @@ assert_http_status 403 "raw PDF blocked in strict mode"
 idpi_close "$PINCHTAB_SECURE_URL" "$TAB_ID"
 
 end_test
+
+# ─────────────────────────────────────────────────────────────────
+# NOTE: wrapContent test skipped
+# Feature check: WrapContent is only applied in /text handler, not in /find results.
+# The /find handler does not wrap content, so this test would be redundant.
+# Verify with: grep -rn "wrapContent" internal/handlers/find.go

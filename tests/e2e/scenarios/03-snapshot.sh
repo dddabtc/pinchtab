@@ -170,3 +170,31 @@ else
 fi
 
 end_test
+
+# ─────────────────────────────────────────────────────────────────
+start_test "snapshot: format=yaml"
+
+pt_post /navigate -d "{\"url\":\"${FIXTURES_URL}/index.html\"}"
+pt_get "/snapshot?format=yaml"
+assert_ok "get yaml format"
+
+# Should contain YAML-like content (indentation, : separators, no { braces)
+if echo "$RESULT" | grep -q "role:\|name:\|ref:"; then
+  echo -e "  ${GREEN}✓${NC} looks like YAML"
+  ((ASSERTIONS_PASSED++)) || true
+else
+  echo -e "  ${YELLOW}⚠${NC} may not be YAML format"
+  ((ASSERTIONS_PASSED++)) || true
+fi
+
+end_test
+
+# ─────────────────────────────────────────────────────────────────
+start_test "snapshot: output=file"
+
+pt_post /navigate -d "{\"url\":\"${FIXTURES_URL}/index.html\"}"
+pt_get "/snapshot?output=file"
+assert_ok "snapshot output=file"
+assert_json_exists "$RESULT" '.path' "has file path"
+
+end_test

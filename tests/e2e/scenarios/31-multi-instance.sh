@@ -80,6 +80,27 @@ assert_json_length_gte "$RESULT" '.' '1' "at least 1 tab"
 end_test
 
 # ─────────────────────────────────────────────────────────────────
+start_test "orchestrator: aggregate tabs (multi-instance)"
+
+pt_post /instances/launch '{"name":"e2e-agg-tabs","headless":true}'
+assert_ok "launch for aggregate"
+AGG_INST=$(echo "$RESULT" | jq -r '.id')
+sleep 3
+
+# Navigate on both instances to ensure tabs exist
+pt_post /navigate "{\"url\":\"${FIXTURES_URL}/index.html\"}"
+pt_post "/instances/${AGG_INST}/tabs/open" "{\"url\":\"${FIXTURES_URL}/form.html\"}"
+
+pt_get /instances/tabs
+assert_ok "aggregate tabs"
+assert_json_length_gte "$RESULT" '.' '2' "at least 2 tabs across instances"
+
+# Cleanup
+pt_post "/instances/${AGG_INST}/stop" '{}'
+
+end_test
+
+# ─────────────────────────────────────────────────────────────────
 start_test "orchestrator: instance tabs"
 
 # Wait for instance to be running (may still be starting)
