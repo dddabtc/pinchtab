@@ -239,10 +239,11 @@ var instanceCmd = &cobra.Command{
 var findCmd = &cobra.Command{
 	Use:   "find <query>",
 	Short: "Find elements by natural language query",
+	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
 		runCLIWith(cfg, func(client *http.Client, base, token string) {
-			browseractions.Find(client, base, token, args)
+			browseractions.FindWithFlags(client, base, token, args[0], cmd)
 		})
 	},
 }
@@ -288,7 +289,7 @@ func init() {
 	snapCmd.DisableFlagParsing = true
 	screenshotCmd.DisableFlagParsing = true
 	// pdfCmd now uses proper cobra flags (see below)
-	findCmd.DisableFlagParsing = true
+	// findCmd now uses proper cobra flags (see below)
 	navCmd.DisableFlagParsing = true
 	clickCmd.DisableFlagParsing = true
 	hoverCmd.DisableFlagParsing = true
@@ -317,6 +318,11 @@ func init() {
 	pdfCmd.Flags().Bool("generate-document-outline", false, "Generate document outline")
 	pdfCmd.Flags().Bool("file-output", false, "Use server-side file output")
 	pdfCmd.Flags().String("path", "", "Server-side output path")
+
+	findCmd.Flags().String("tab", "", "Tab ID")
+	findCmd.Flags().String("threshold", "", "Minimum similarity score (0-1)")
+	findCmd.Flags().Bool("explain", false, "Show score breakdown")
+	findCmd.Flags().Bool("ref-only", false, "Output just the element ref")
 
 	rootCmd.AddCommand(quickCmd)
 	rootCmd.AddCommand(navCmd)
