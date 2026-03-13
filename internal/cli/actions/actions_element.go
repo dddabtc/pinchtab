@@ -3,10 +3,32 @@ package actions
 import (
 	"github.com/pinchtab/pinchtab/internal/cli"
 	"github.com/pinchtab/pinchtab/internal/cli/apiclient"
+	"github.com/spf13/cobra"
 	"net/http"
 	"strconv"
 	"strings"
 )
+
+func ActionWithFlags(client *http.Client, base, token, kind, refArg string, cmd *cobra.Command) {
+	body := map[string]any{"kind": kind}
+
+	css, _ := cmd.Flags().GetString("css")
+	if css != "" {
+		body["selector"] = css
+	} else if refArg != "" {
+		body["ref"] = refArg
+	} else {
+		cli.Fatal("Usage: pinchtab %s <ref> or pinchtab %s --css <selector>", kind, kind)
+	}
+
+	if kind == "click" {
+		if v, _ := cmd.Flags().GetBool("wait-nav"); v {
+			body["waitNav"] = true
+		}
+	}
+
+	apiclient.DoPost(client, base, token, "/action", body)
+}
 
 func Action(client *http.Client, base, token, kind string, args []string) {
 	body := map[string]any{"kind": kind}

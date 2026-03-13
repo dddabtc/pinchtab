@@ -50,10 +50,15 @@ var snapCmd = &cobra.Command{
 var clickCmd = &cobra.Command{
 	Use:   "click <ref>",
 	Short: "Click element",
+	Args:  cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		ref := ""
+		if len(args) > 0 {
+			ref = args[0]
+		}
 		cfg := config.Load()
 		runCLIWith(cfg, func(client *http.Client, base, token string) {
-			browseractions.Action(client, base, token, "click", args)
+			browseractions.ActionWithFlags(client, base, token, "click", ref, cmd)
 		})
 	},
 }
@@ -141,10 +146,15 @@ var fillCmd = &cobra.Command{
 var hoverCmd = &cobra.Command{
 	Use:   "hover <ref>",
 	Short: "Hover element",
+	Args:  cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		ref := ""
+		if len(args) > 0 {
+			ref = args[0]
+		}
 		cfg := config.Load()
 		runCLIWith(cfg, func(client *http.Client, base, token string) {
-			browseractions.Action(client, base, token, "hover", args)
+			browseractions.ActionWithFlags(client, base, token, "hover", ref, cmd)
 		})
 	},
 }
@@ -292,13 +302,17 @@ func init() {
 	// pdfCmd now uses proper cobra flags (see below)
 	// findCmd now uses proper cobra flags (see below)
 	// navCmd now uses proper cobra flags (see below)
-	clickCmd.DisableFlagParsing = true
-	hoverCmd.DisableFlagParsing = true
+	// clickCmd now uses proper cobra flags (see below)
+	// hoverCmd now uses proper cobra flags (see below)
 	// textCmd now uses proper cobra flags (see below)
 	tabsCmd.DisableFlagParsing = true
 
 	uploadCmd.Flags().StringP("selector", "s", "", "CSS selector for file input")
 	downloadCmd.Flags().StringP("output", "o", "", "Save downloaded file to path")
+
+	clickCmd.Flags().String("css", "", "CSS selector instead of ref")
+	clickCmd.Flags().Bool("wait-nav", false, "Wait for navigation after click")
+	hoverCmd.Flags().String("css", "", "CSS selector instead of ref")
 
 	snapCmd.Flags().BoolP("interactive", "i", false, "Filter interactive elements only")
 	snapCmd.Flags().BoolP("compact", "c", false, "Compact output format")
