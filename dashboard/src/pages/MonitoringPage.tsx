@@ -15,6 +15,10 @@ export default function MonitoringPage() {
     settings,
   } = useAppStore();
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [screenshotUrl, setScreenshotUrl] = useState<string | null>(null);
+  const [screenshotTabId, setScreenshotTabId] = useState<string | null>(null);
+  const [screenshotLoading, setScreenshotLoading] = useState(false);
+  const [screenshotError, setScreenshotError] = useState<string | null>(null);
   const memoryEnabled = settings.monitoring?.memoryMetrics ?? false;
 
   // Auto-select first running instance
@@ -37,6 +41,51 @@ export default function MonitoringPage() {
   const selectedTabs = selectedId ? currentTabs?.[selectedId] || [] : [];
   const runningInstances =
     instances?.filter((i) => i?.status === "running") || [];
+  const screenshotTab = selectedTabs[0] ?? null;
+
+  useEffect(() => {
+    return () => {
+      if (screenshotUrl) {
+        URL.revokeObjectURL(screenshotUrl);
+      }
+    };
+  }, [screenshotUrl]);
+
+  useEffect(() => {
+    setScreenshotError(null);
+    setScreenshotLoading(false);
+    setScreenshotTabId(null);
+    setScreenshotUrl((currentUrl) => {
+      if (currentUrl) {
+        URL.revokeObjectURL(currentUrl);
+      }
+      return null;
+    });
+  }, [selectedId]);
+
+  const handleFetchScreenshot = async () => {
+    if (!screenshotTab) return;
+
+    setScreenshotLoading(true);
+    setScreenshotError(null);
+    try {
+      const blob = await api.fetchTabScreenshot(screenshotTab.id);
+      const nextUrl = URL.createObjectURL(blob);
+      setScreenshotTabId(screenshotTab.id);
+      setScreenshotUrl((currentUrl) => {
+        if (currentUrl) {
+          URL.revokeObjectURL(currentUrl);
+        }
+        return nextUrl;
+      });
+    } catch (e) {
+      setScreenshotError(
+        e instanceof Error ? e.message : "Failed to capture screenshot",
+      );
+    } finally {
+      setScreenshotLoading(false);
+    }
+  };
 
   return (
     <ErrorBoundary>
@@ -116,14 +165,70 @@ export default function MonitoringPage() {
                         {selectedInstance.headless ? "Headless" : "Headed"}
                       </div>
                     </div>
-                    {selectedInstance.status === "running" && (
+                    <div className="flex items-center gap-2">
                       <Button
                         size="sm"
-                        variant="danger"
-                        onClick={() => handleStop(selectedInstance.id)}
+                        variant="secondary"
+                        loading={screenshotLoading}
+                        disabled={!screenshotTab}
+                        onClick={() => void handleFetchScreenshot()}
                       >
-                        Stop
+                        {screenshotLoading
+                          ? "Capturing..."
+                          : screenshotUrl
+                            ? "Refresh Screenshot"
+                            : "Capture Screenshot"}
                       </Button>
+                      {selectedInstance.status === "running" && (
+                        <Button
+                          size="sm"
+                          variant="danger"
+                          onClick={() => handleStop(selectedInstance.id)}
+                        >
+                          Stop
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="border-b border-border-subtle px-4 py-3">
+                    <div className="mb-2 flex items-center justify-between gap-3">
+                      <h4 className="text-xs font-semibold uppercase tracking-wide text-text-muted">
+                        Screenshot Preview
+                      </h4>
+                      {screenshotTab && (
+                        <div className="truncate text-xs text-text-muted">
+                          {screenshotTab.title || screenshotTab.url}
+                        </div>
+                      )}
+                    </div>
+                    {screenshotError ? (
+                      <div
+                        className="text-sm text-destructive"
+                        role="status"
+                        aria-live="polite"
+                      >
+                        Screenshot failed: {screenshotError}
+                      </div>
+                    ) : screenshotUrl ? (
+                      <div className="overflow-hidden rounded-md border border-border-subtle/80 bg-bg-elevated">
+                        <img
+                          src={screenshotUrl}
+                          alt={`Screenshot preview for ${selectedInstance.profileName}`}
+                          className="max-h-80 w-full object-contain"
+                        />
+                      </div>
+                    ) : (
+                      <div className="text-sm text-text-muted">
+                        {screenshotTab
+                          ? "Capture a manual screenshot of the first open tab."
+                          : "Open a tab to capture a screenshot."}
+                      </div>
+                    )}
+                    {screenshotUrl && screenshotTabId && (
+                      <div className="mt-2 text-xs text-text-muted">
+                        Last captured from tab {screenshotTabId}
+                      </div>
                     )}
                   </div>
 
