@@ -354,6 +354,10 @@ func (m *MockBridge) GetCrashLogs() []string {
 	return nil
 }
 
+func (m *MockBridge) NetworkMonitor() *bridge.NetworkMonitor {
+	return nil
+}
+
 func (m *MockBridge) Execute(ctx context.Context, tabID string, task func(ctx context.Context) error) error {
 	return task(ctx)
 }

@@ -67,6 +67,9 @@ type RuntimeConfig struct {
 	// Engine mode: "chrome" (default), "lite", or "auto"
 	Engine string
 
+	// Network monitoring
+	NetworkBufferSize int // Per-tab network buffer size (default 100)
+
 	// Scheduler settings (dashboard mode only)
 	Scheduler SchedulerConfig
 }
@@ -109,11 +112,12 @@ type FileConfig struct {
 }
 
 type ServerConfig struct {
-	Port     string `json:"port,omitempty"`
-	Bind     string `json:"bind,omitempty"`
-	Token    string `json:"token,omitempty"`
-	StateDir string `json:"stateDir,omitempty"`
-	Engine   string `json:"engine,omitempty"`
+	Port              string `json:"port,omitempty"`
+	Bind              string `json:"bind,omitempty"`
+	Token             string `json:"token,omitempty"`
+	StateDir          string `json:"stateDir,omitempty"`
+	Engine            string `json:"engine,omitempty"`
+	NetworkBufferSize *int   `json:"networkBufferSize,omitempty"`
 }
 
 type BrowserConfig struct {

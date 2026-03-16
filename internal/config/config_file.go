@@ -101,11 +101,12 @@ type fileConfigJSON struct {
 }
 
 type serverConfigJSON struct {
-	Port     string `json:"port"`
-	Bind     string `json:"bind"`
-	Token    string `json:"token"`
-	StateDir string `json:"stateDir"`
-	Engine   string `json:"engine"`
+	Port              string `json:"port"`
+	Bind              string `json:"bind"`
+	Token             string `json:"token"`
+	StateDir          string `json:"stateDir"`
+	Engine            string `json:"engine"`
+	NetworkBufferSize *int   `json:"networkBufferSize,omitempty"`
 }
 
 type browserConfigJSON struct {
@@ -209,11 +210,12 @@ func (fc FileConfig) MarshalJSON() ([]byte, error) {
 	return json.Marshal(fileConfigJSON{
 		ConfigVersion: fc.ConfigVersion,
 		Server: serverConfigJSON{
-			Port:     fc.Server.Port,
-			Bind:     fc.Server.Bind,
-			Token:    fc.Server.Token,
-			StateDir: fc.Server.StateDir,
-			Engine:   fc.Server.Engine,
+			Port:              fc.Server.Port,
+			Bind:              fc.Server.Bind,
+			Token:             fc.Server.Token,
+			StateDir:          fc.Server.StateDir,
+			Engine:            fc.Server.Engine,
+			NetworkBufferSize: fc.Server.NetworkBufferSize,
 		},
 		Browser: browserConfigJSON{
 			ChromeVersion:    fc.Browser.ChromeVersion,
@@ -325,13 +327,20 @@ func FileConfigFromRuntime(cfg *RuntimeConfig) FileConfig {
 		mode = "headed"
 	}
 
+	var netBufSize *int
+	if cfg.NetworkBufferSize > 0 {
+		v := cfg.NetworkBufferSize
+		netBufSize = &v
+	}
+
 	fc := FileConfig{
 		Server: ServerConfig{
-			Port:     cfg.Port,
-			Bind:     cfg.Bind,
-			Token:    cfg.Token,
-			StateDir: cfg.StateDir,
-			Engine:   cfg.Engine,
+			Port:              cfg.Port,
+			Bind:              cfg.Bind,
+			Token:             cfg.Token,
+			StateDir:          cfg.StateDir,
+			Engine:            cfg.Engine,
+			NetworkBufferSize: netBufSize,
 		},
 		Browser: BrowserConfig{
 			ChromeVersion:    cfg.ChromeVersion,

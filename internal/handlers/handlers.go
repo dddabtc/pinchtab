@@ -146,6 +146,13 @@ func (h *Handlers) RegisterRoutes(mux *http.ServeMux, doShutdown func()) {
 	mux.HandleFunc("GET /screencast/tabs", h.HandleScreencastAll)
 	mux.HandleFunc("POST /tabs/{id}/evaluate", h.HandleTabEvaluate)
 	mux.HandleFunc("POST /evaluate", h.HandleEvaluate)
+	mux.HandleFunc("GET /network", h.HandleNetwork)
+	mux.HandleFunc("GET /network/stream", h.HandleNetworkStream)
+	mux.HandleFunc("GET /network/{requestId}", h.HandleNetworkByID)
+	mux.HandleFunc("POST /network/clear", h.HandleNetworkClear)
+	mux.HandleFunc("GET /tabs/{id}/network", h.HandleTabNetwork)
+	mux.HandleFunc("GET /tabs/{id}/network/stream", h.HandleTabNetworkStream)
+	mux.HandleFunc("GET /tabs/{id}/network/{requestId}", h.HandleTabNetworkByID)
 	mux.HandleFunc("GET /welcome", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte(assets.WelcomeHTML))

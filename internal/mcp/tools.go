@@ -134,5 +134,27 @@ func allTools() []mcp.Tool {
 			mcp.WithNumber("timeout", mcp.Description("Timeout in milliseconds (default: 10000, max: 30000)")),
 			mcp.WithString("tabId", mcp.Description("Target tab ID")),
 		),
+
+		// ── Network Monitoring ──────────────────────────────────────
+		mcp.NewTool("pinchtab_network",
+			mcp.WithDescription("List recent network requests captured from the browser. Returns method, status, URL, type, size, and timing for each request."),
+			mcp.WithString("tabId", mcp.Description("Target tab ID (optional, uses current tab if empty)")),
+			mcp.WithString("filter", mcp.Description("URL pattern filter (substring match)")),
+			mcp.WithString("method", mcp.Description("HTTP method filter (GET, POST, etc)")),
+			mcp.WithString("status", mcp.Description("Status code range filter (e.g. '4xx', '5xx', '200')")),
+			mcp.WithString("type", mcp.Description("Resource type filter (xhr, fetch, document, stylesheet, script, image, etc)")),
+			mcp.WithNumber("limit", mcp.Description("Maximum number of entries to return")),
+			mcp.WithNumber("bufferSize", mcp.Description("Per-tab buffer size for new capture (default from config, typically 100)")),
+		),
+		mcp.NewTool("pinchtab_network_detail",
+			mcp.WithDescription("Get full details of a specific network request including headers, timing, and optionally the response body"),
+			mcp.WithString("requestId", mcp.Required(), mcp.Description("The request ID from pinchtab_network results")),
+			mcp.WithString("tabId", mcp.Description("Target tab ID")),
+			mcp.WithBoolean("body", mcp.Description("Include response body (can be large)")),
+		),
+		mcp.NewTool("pinchtab_network_clear",
+			mcp.WithDescription("Clear captured network data for a tab or all tabs"),
+			mcp.WithString("tabId", mcp.Description("Target tab ID (optional, clears all if empty)")),
+		),
 	}
 }

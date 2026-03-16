@@ -44,6 +44,9 @@ type BridgeAPI interface {
 
 	// Crash monitoring
 	GetCrashLogs() []string
+
+	// Network monitoring
+	NetworkMonitor() *NetworkMonitor
 }
 
 type LockInfo struct {

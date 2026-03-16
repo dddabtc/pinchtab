@@ -343,6 +343,18 @@ var checkCmd = &cobra.Command{
 	},
 }
 
+var networkCmd = &cobra.Command{
+	Use:   "network [requestId]",
+	Short: "List or inspect network requests",
+	Args:  cobra.MaximumNArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		cfg := config.Load()
+		runCLIWith(cfg, func(client *http.Client, base, token string) {
+			browseractions.Network(client, base, token, cmd, args)
+		})
+	},
+}
+
 var uncheckCmd = &cobra.Command{
 	Use:   "uncheck <selector>",
 	Short: "Uncheck a checkbox or radio",
@@ -382,6 +394,7 @@ func init() {
 	selectCmd.GroupID = "browser"
 	checkCmd.GroupID = "browser"
 	uncheckCmd.GroupID = "browser"
+	networkCmd.GroupID = "browser"
 
 	tabsCmd.AddCommand(&cobra.Command{
 		Use:   "new [url]",
@@ -512,6 +525,18 @@ func init() {
 	rootCmd.AddCommand(selectCmd)
 	rootCmd.AddCommand(checkCmd)
 	rootCmd.AddCommand(uncheckCmd)
+	rootCmd.AddCommand(networkCmd)
+
+	networkCmd.Flags().String("tab", "", "Tab ID")
+	networkCmd.Flags().String("filter", "", "URL pattern filter")
+	networkCmd.Flags().String("method", "", "HTTP method filter (GET, POST, etc)")
+	networkCmd.Flags().String("status", "", "Status code range (e.g. 4xx, 5xx, 200)")
+	networkCmd.Flags().String("type", "", "Resource type filter (xhr, fetch, document, etc)")
+	networkCmd.Flags().String("limit", "", "Maximum entries to return")
+	networkCmd.Flags().Bool("body", false, "Include response body (with requestId)")
+	networkCmd.Flags().Bool("clear", false, "Clear captured network data")
+	networkCmd.Flags().String("buffer-size", "", "Per-tab network buffer size (default 100)")
+	networkCmd.Flags().Bool("stream", false, "Stream network entries in real-time (like tail -f)")
 
 	instanceCmd.GroupID = "management"
 

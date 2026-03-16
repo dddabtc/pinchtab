@@ -41,6 +41,9 @@ type Bridge struct {
 	Actions       map[string]ActionFunc
 	Locks         *LockManager
 
+	// Network monitoring
+	netMonitor *NetworkMonitor
+
 	// Lazy initialization
 	initMu      sync.Mutex
 	initialized bool
@@ -52,11 +55,16 @@ type Bridge struct {
 
 func New(allocCtx, browserCtx context.Context, cfg *config.RuntimeConfig) *Bridge {
 	idMgr := idutil.NewManager()
+	netBufSize := DefaultNetworkBufferSize
+	if cfg != nil && cfg.NetworkBufferSize > 0 {
+		netBufSize = cfg.NetworkBufferSize
+	}
 	b := &Bridge{
 		AllocCtx:   allocCtx,
 		BrowserCtx: browserCtx,
 		Config:     cfg,
 		IdMgr:      idMgr,
+		netMonitor: NewNetworkMonitor(netBufSize),
 	}
 	// Only initialize TabManager if browserCtx is provided (not lazy-init case)
 	if cfg != nil && browserCtx != nil {
@@ -95,6 +103,15 @@ func (b *Bridge) tabSetup(ctx context.Context) {
 			slog.Warn("no-animations injection failed", "err", err)
 		}
 	}
+}
+
+// StartNetworkCapture enables network monitoring for a specific tab.
+// This is called lazily when network data is first requested for a tab.
+func (b *Bridge) StartNetworkCapture(tabCtx context.Context, tabID string) error {
+	if b.netMonitor == nil {
+		return fmt.Errorf("network monitor not initialized")
+	}
+	return b.netMonitor.StartCapture(tabCtx, tabID)
 }
 
 func (b *Bridge) Lock(tabID, owner string, ttl time.Duration) error {
@@ -256,6 +273,11 @@ func (b *Bridge) Execute(ctx context.Context, tabID string, task func(ctx contex
 		return b.TabManager.Execute(ctx, tabID, task)
 	}
 	return task(ctx)
+}
+
+// NetworkMonitor returns the bridge's network monitor instance.
+func (b *Bridge) NetworkMonitor() *NetworkMonitor {
+	return b.netMonitor
 }
 
 func (b *Bridge) AvailableActions() []string {
