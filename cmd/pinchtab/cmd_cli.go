@@ -331,6 +331,30 @@ var selectCmd = &cobra.Command{
 	},
 }
 
+var checkCmd = &cobra.Command{
+	Use:   "check <selector>",
+	Short: "Check a checkbox or radio",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		cfg := config.Load()
+		runCLIWith(cfg, func(client *http.Client, base, token string) {
+			browseractions.Action(client, base, token, "check", args[0], cmd)
+		})
+	},
+}
+
+var uncheckCmd = &cobra.Command{
+	Use:   "uncheck <selector>",
+	Short: "Uncheck a checkbox or radio",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		cfg := config.Load()
+		runCLIWith(cfg, func(client *http.Client, base, token string) {
+			browseractions.Action(client, base, token, "uncheck", args[0], cmd)
+		})
+	},
+}
+
 func init() {
 	quickCmd.GroupID = "browser"
 	navCmd.GroupID = "browser"
@@ -356,6 +380,8 @@ func init() {
 	uploadCmd.GroupID = "browser"
 	findCmd.GroupID = "browser"
 	selectCmd.GroupID = "browser"
+	checkCmd.GroupID = "browser"
+	uncheckCmd.GroupID = "browser"
 
 	tabsCmd.AddCommand(&cobra.Command{
 		Use:   "new [url]",
@@ -456,6 +482,8 @@ func init() {
 	scrollCmd.Flags().String("tab", "", "Tab ID")
 	selectCmd.Flags().String("tab", "", "Tab ID")
 	evalCmd.Flags().String("tab", "", "Tab ID")
+	checkCmd.Flags().String("tab", "", "Tab ID")
+	uncheckCmd.Flags().String("tab", "", "Tab ID")
 
 	rootCmd.AddCommand(quickCmd)
 	rootCmd.AddCommand(navCmd)
@@ -482,6 +510,8 @@ func init() {
 	rootCmd.AddCommand(uploadCmd)
 	rootCmd.AddCommand(findCmd)
 	rootCmd.AddCommand(selectCmd)
+	rootCmd.AddCommand(checkCmd)
+	rootCmd.AddCommand(uncheckCmd)
 
 	instanceCmd.GroupID = "management"
 
