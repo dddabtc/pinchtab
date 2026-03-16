@@ -159,6 +159,9 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 		case selector.KindRef:
 			// Ensure Ref is set for downstream recovery/intent caching.
 			req.Ref = sel.Value
+			// Clear Selector so the bridge doesn't try to use the ref
+			// string as a CSS selector (it checks Selector before NodeID).
+			req.Selector = ""
 			cache := h.Bridge.GetRefCache(resolvedTabID)
 			if cache != nil {
 				if nid, ok := cache.Refs[sel.Value]; ok {
@@ -490,6 +493,7 @@ func (h *Handlers) handleActionsBatch(w http.ResponseWriter, r *http.Request, re
 			switch sel.Kind {
 			case selector.KindRef:
 				action.Ref = sel.Value
+				action.Selector = ""
 				cache := h.Bridge.GetRefCache(resolvedTabID)
 				if cache != nil {
 					if nid, ok := cache.Refs[sel.Value]; ok {
@@ -759,6 +763,7 @@ func (h *Handlers) HandleMacro(w http.ResponseWriter, r *http.Request) {
 			switch sel.Kind {
 			case selector.KindRef:
 				step.Ref = sel.Value
+				step.Selector = ""
 				cache := h.Bridge.GetRefCache(resolvedTabID)
 				if cache != nil {
 					if nid, ok := cache.Refs[sel.Value]; ok {
