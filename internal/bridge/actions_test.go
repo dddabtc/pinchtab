@@ -53,6 +53,73 @@ func TestHoverAction_UsesCoordinatePath(t *testing.T) {
 	}
 }
 
+func TestCheckAction_Registered(t *testing.T) {
+	b := New(context.TODO(), nil, &config.RuntimeConfig{})
+	if _, ok := b.Actions[ActionCheck]; !ok {
+		t.Fatal("ActionCheck not registered in action registry")
+	}
+}
+
+func TestUncheckAction_Registered(t *testing.T) {
+	b := New(context.TODO(), nil, &config.RuntimeConfig{})
+	if _, ok := b.Actions[ActionUncheck]; !ok {
+		t.Fatal("ActionUncheck not registered in action registry")
+	}
+}
+
+func TestCheckAction_RequiresSelectorOrRef(t *testing.T) {
+	b := New(context.TODO(), nil, &config.RuntimeConfig{})
+	_, err := b.Actions[ActionCheck](context.Background(), ActionRequest{})
+	if err == nil {
+		t.Fatal("expected error when no selector/ref/nodeId provided")
+	}
+	if !strings.Contains(err.Error(), "need selector") {
+		t.Fatalf("expected 'need selector' error, got: %v", err)
+	}
+}
+
+func TestUncheckAction_RequiresSelectorOrRef(t *testing.T) {
+	b := New(context.TODO(), nil, &config.RuntimeConfig{})
+	_, err := b.Actions[ActionUncheck](context.Background(), ActionRequest{})
+	if err == nil {
+		t.Fatal("expected error when no selector/ref/nodeId provided")
+	}
+	if !strings.Contains(err.Error(), "need selector") {
+		t.Fatalf("expected 'need selector' error, got: %v", err)
+	}
+}
+
+func TestCheckAction_WithNodeID_UsesResolveNode(t *testing.T) {
+	b := New(context.TODO(), nil, &config.RuntimeConfig{})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := b.Actions[ActionCheck](ctx, ActionRequest{NodeID: 42})
+	if err == nil {
+		t.Fatal("expected error from cancelled context")
+	}
+	// Should NOT be a validation error — it should attempt the CDP path
+	if strings.Contains(err.Error(), "need selector") {
+		t.Fatalf("expected CDP path, got validation error: %v", err)
+	}
+}
+
+func TestUncheckAction_WithSelector_UsesCSSPath(t *testing.T) {
+	b := New(context.TODO(), nil, &config.RuntimeConfig{})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := b.Actions[ActionUncheck](ctx, ActionRequest{Selector: "#my-checkbox"})
+	if err == nil {
+		t.Fatal("expected error from cancelled context")
+	}
+	if strings.Contains(err.Error(), "need selector") {
+		t.Fatalf("expected CSS path, got validation error: %v", err)
+	}
+}
+
 func TestXpathString(t *testing.T) {
 	tests := []struct {
 		input    string

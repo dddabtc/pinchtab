@@ -236,6 +236,94 @@ func TestScroll(t *testing.T) {
 	}
 }
 
+func TestCheck(t *testing.T) {
+	m := newMockServer()
+	defer m.close()
+	client := m.server.Client()
+
+	cmd := newActionCmd()
+	Action(client, m.base(), "", "check", "e7", cmd)
+	if m.lastPath != "/action" {
+		t.Errorf("expected /action, got %s", m.lastPath)
+	}
+	var body map[string]any
+	_ = json.Unmarshal([]byte(m.lastBody), &body)
+	if body["kind"] != "check" {
+		t.Errorf("expected kind=check, got %v", body["kind"])
+	}
+	if body["ref"] != "e7" {
+		t.Errorf("expected ref=e7, got %v", body["ref"])
+	}
+	if _, hasSelector := body["selector"]; hasSelector {
+		t.Error("should not set selector when using ref")
+	}
+}
+
+func TestCheckWithCSS(t *testing.T) {
+	m := newMockServer()
+	defer m.close()
+	client := m.server.Client()
+
+	cmd := newActionCmd()
+	_ = cmd.Flags().Set("css", "input[type=checkbox]")
+	Action(client, m.base(), "", "check", "", cmd)
+	var body map[string]any
+	_ = json.Unmarshal([]byte(m.lastBody), &body)
+	if body["kind"] != "check" {
+		t.Errorf("expected kind=check, got %v", body["kind"])
+	}
+	if body["selector"] != "input[type=checkbox]" {
+		t.Errorf("expected selector=input[type=checkbox], got %v", body["selector"])
+	}
+	if _, hasRef := body["ref"]; hasRef {
+		t.Error("should not set ref when --css is provided")
+	}
+}
+
+func TestUncheck(t *testing.T) {
+	m := newMockServer()
+	defer m.close()
+	client := m.server.Client()
+
+	cmd := newActionCmd()
+	Action(client, m.base(), "", "uncheck", "e9", cmd)
+	if m.lastPath != "/action" {
+		t.Errorf("expected /action, got %s", m.lastPath)
+	}
+	var body map[string]any
+	_ = json.Unmarshal([]byte(m.lastBody), &body)
+	if body["kind"] != "uncheck" {
+		t.Errorf("expected kind=uncheck, got %v", body["kind"])
+	}
+	if body["ref"] != "e9" {
+		t.Errorf("expected ref=e9, got %v", body["ref"])
+	}
+	if _, hasSelector := body["selector"]; hasSelector {
+		t.Error("should not set selector when using ref")
+	}
+}
+
+func TestUncheckWithCSS(t *testing.T) {
+	m := newMockServer()
+	defer m.close()
+	client := m.server.Client()
+
+	cmd := newActionCmd()
+	_ = cmd.Flags().Set("css", "#agree-checkbox")
+	Action(client, m.base(), "", "uncheck", "", cmd)
+	var body map[string]any
+	_ = json.Unmarshal([]byte(m.lastBody), &body)
+	if body["kind"] != "uncheck" {
+		t.Errorf("expected kind=uncheck, got %v", body["kind"])
+	}
+	if body["selector"] != "#agree-checkbox" {
+		t.Errorf("expected selector=#agree-checkbox, got %v", body["selector"])
+	}
+	if _, hasRef := body["ref"]; hasRef {
+		t.Error("should not set ref when --css is provided")
+	}
+}
+
 func TestSelect(t *testing.T) {
 	m := newMockServer()
 	defer m.close()
