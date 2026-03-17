@@ -233,3 +233,49 @@ func TestKeyUpAction_WithCancelledContext(t *testing.T) {
 		t.Fatal("expected error from cancelled context")
 	}
 }
+
+// ── ScrollIntoView action tests ────────────────────────────────────────
+
+func TestScrollIntoViewAction_Registered(t *testing.T) {
+	b := New(context.TODO(), nil, &config.RuntimeConfig{})
+	if _, ok := b.Actions[ActionScrollIntoView]; !ok {
+		t.Fatal("ActionScrollIntoView not registered in action registry")
+	}
+}
+
+func TestScrollIntoViewAction_RequiresSelectorOrRef(t *testing.T) {
+	b := New(context.TODO(), nil, &config.RuntimeConfig{})
+	_, err := b.Actions[ActionScrollIntoView](context.Background(), ActionRequest{})
+	if err == nil {
+		t.Fatal("expected error when no selector/ref/nodeId provided")
+	}
+	if !strings.Contains(err.Error(), "need selector") {
+		t.Fatalf("expected 'need selector' error, got: %v", err)
+	}
+}
+
+func TestScrollIntoViewAction_WithNodeID_UsesCDPPath(t *testing.T) {
+	b := New(context.TODO(), nil, &config.RuntimeConfig{})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := b.Actions[ActionScrollIntoView](ctx, ActionRequest{NodeID: 42})
+	if err == nil {
+		t.Fatal("expected error from cancelled context")
+	}
+	if strings.Contains(err.Error(), "need selector") {
+		t.Fatalf("expected CDP path, got validation error: %v", err)
+	}
+}
+
+func TestScrollIntoViewAction_WithSelector_UsesCSSPath(t *testing.T) {
+	b := New(context.TODO(), nil, &config.RuntimeConfig{})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := b.Actions[ActionScrollIntoView](ctx, ActionRequest{Selector: "#footer"})
+	if err == nil {
+		t.Fatal("expected error from cancelled context")
+	}
+	if strings.Contains(err.Error(), "need selector") {
+		t.Fatalf("expected CSS path, got validation error: %v", err)
+	}
+}

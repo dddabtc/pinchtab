@@ -642,6 +642,82 @@ func ScrollByNodeID(ctx context.Context, nodeID int64) error {
 	)
 }
 
+// ScrollIntoViewAndGetBox scrolls the element into view using
+// DOM.scrollIntoViewIfNeeded (no-op if already visible) and returns
+// the element's bounding box via getBoundingClientRect().
+func ScrollIntoViewAndGetBox(ctx context.Context, nodeID int64) (map[string]any, error) {
+	// 1. Scroll into view
+	if err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+		return chromedp.FromContext(ctx).Target.Execute(ctx, "DOM.scrollIntoViewIfNeeded", map[string]any{"backendNodeId": nodeID}, nil)
+	})); err != nil {
+		return nil, fmt.Errorf("scrollIntoViewIfNeeded: %w", err)
+	}
+
+	// 2. Resolve backendNodeId → objectId
+	var resolveResult json.RawMessage
+	if err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+		return chromedp.FromContext(ctx).Target.Execute(ctx, "DOM.resolveNode", map[string]any{
+			"backendNodeId": nodeID,
+		}, &resolveResult)
+	})); err != nil {
+		return nil, fmt.Errorf("DOM.resolveNode: %w", err)
+	}
+
+	var resolved struct {
+		Object struct {
+			ObjectID string `json:"objectId"`
+		} `json:"object"`
+	}
+	if err := json.Unmarshal(resolveResult, &resolved); err != nil {
+		return nil, err
+	}
+	if resolved.Object.ObjectID == "" {
+		return nil, fmt.Errorf("element not found in DOM (backendNodeId=%d)", nodeID)
+	}
+
+	// 3. Get bounding box via getBoundingClientRect
+	const boxFn = `function() {
+		var r = this.getBoundingClientRect();
+		return { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) };
+	}`
+
+	var callResult json.RawMessage
+	if err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+		return chromedp.FromContext(ctx).Target.Execute(ctx, "Runtime.callFunctionOn", map[string]any{
+			"functionDeclaration": boxFn,
+			"objectId":            resolved.Object.ObjectID,
+			"returnByValue":       true,
+		}, &callResult)
+	})); err != nil {
+		return nil, fmt.Errorf("getBoundingClientRect: %w", err)
+	}
+
+	var callRes struct {
+		Result struct {
+			Value struct {
+				X      float64 `json:"x"`
+				Y      float64 `json:"y"`
+				Width  float64 `json:"width"`
+				Height float64 `json:"height"`
+			} `json:"value"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(callResult, &callRes); err != nil {
+		return nil, err
+	}
+
+	box := callRes.Result.Value
+	return map[string]any{
+		"scrolled": true,
+		"box": map[string]any{
+			"x":      box.X,
+			"y":      box.Y,
+			"width":  box.Width,
+			"height": box.Height,
+		},
+	}, nil
+}
+
 func WaitForTitle(ctx context.Context, timeout time.Duration) (string, error) {
 	if timeout <= 0 {
 		var title string

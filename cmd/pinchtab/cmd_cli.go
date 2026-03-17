@@ -493,6 +493,22 @@ var keyupCmd = &cobra.Command{
 	},
 }
 
+var scrollintoviewCmd = &cobra.Command{
+	Use:   "scrollintoview <selector>",
+	Short: "Scroll element into view and return bounding box",
+	Args:  cobra.MaximumNArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		ref := ""
+		if len(args) > 0 {
+			ref = args[0]
+		}
+		cfg := config.Load()
+		runCLIWith(cfg, func(client *http.Client, base, token string) {
+			browseractions.Action(client, base, token, "scrollintoview", ref, cmd)
+		})
+	},
+}
+
 func init() {
 	quickCmd.GroupID = "browser"
 	navCmd.GroupID = "browser"
@@ -528,6 +544,7 @@ func init() {
 	keyboardCmd.GroupID = "browser"
 	keydownCmd.GroupID = "browser"
 	keyupCmd.GroupID = "browser"
+	scrollintoviewCmd.GroupID = "browser"
 
 	tabsCmd.AddCommand(&cobra.Command{
 		Use:   "new [url]",
@@ -637,6 +654,9 @@ func init() {
 	keydownCmd.Flags().String("tab", "", "Tab ID")
 	keyupCmd.Flags().String("tab", "", "Tab ID")
 
+	scrollintoviewCmd.Flags().String("css", "", "CSS selector instead of ref")
+	scrollintoviewCmd.Flags().String("tab", "", "Tab ID")
+
 	rootCmd.AddCommand(quickCmd)
 	rootCmd.AddCommand(navCmd)
 	rootCmd.AddCommand(backCmd)
@@ -671,6 +691,7 @@ func init() {
 	rootCmd.AddCommand(keyboardCmd)
 	rootCmd.AddCommand(keydownCmd)
 	rootCmd.AddCommand(keyupCmd)
+	rootCmd.AddCommand(scrollintoviewCmd)
 
 	keyboardCmd.AddCommand(keyboardTypeCmd)
 	keyboardCmd.AddCommand(keyboardInsertTextCmd)

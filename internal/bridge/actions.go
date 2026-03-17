@@ -28,8 +28,9 @@ const (
 	ActionUncheck        = "uncheck"
 	ActionKeyboardType   = "keyboard-type"
 	ActionKeyboardInsert = "keyboard-inserttext"
-	ActionKeyDown        = "keydown"
-	ActionKeyUp          = "keyup"
+	ActionKeyDown          = "keydown"
+	ActionKeyUp            = "keyup"
+	ActionScrollIntoView   = "scrollintoview"
 )
 
 func (b *Bridge) InitActionRegistry() {
@@ -334,6 +335,19 @@ func (b *Bridge) InitActionRegistry() {
 				return nil, err
 			}
 			return map[string]any{"keyup": req.Key}, nil
+		},
+		ActionScrollIntoView: func(ctx context.Context, req ActionRequest) (map[string]any, error) {
+			if req.NodeID > 0 {
+				return ScrollIntoViewAndGetBox(ctx, req.NodeID)
+			}
+			if req.Selector != "" {
+				nid, err := ResolveCSSToNodeID(ctx, req.Selector)
+				if err != nil {
+					return nil, err
+				}
+				return ScrollIntoViewAndGetBox(ctx, nid)
+			}
+			return nil, fmt.Errorf("need selector or ref")
 		},
 	}
 }
