@@ -28,9 +28,9 @@ const (
 	ActionUncheck        = "uncheck"
 	ActionKeyboardType   = "keyboard-type"
 	ActionKeyboardInsert = "keyboard-inserttext"
-	ActionKeyDown          = "keydown"
-	ActionKeyUp            = "keyup"
-	ActionScrollIntoView   = "scrollintoview"
+	ActionKeyDown        = "keydown"
+	ActionKeyUp          = "keyup"
+	ActionScrollIntoView = "scrollintoview"
 )
 
 func (b *Bridge) InitActionRegistry() {
