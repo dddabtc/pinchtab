@@ -43,6 +43,61 @@ function getBinaryPath() {
   return path.join(os.homedir(), '.pinchtab', 'bin', getBinaryName());
 }
 
+// Handle `pinchtab skill update` at the Node.js level (no Go binary needed)
+const args = process.argv.slice(2);
+if (args[0] === 'skill' && (args[1] === 'update' || args[1] === 'sync')) {
+  try {
+    const { syncSkills } = require('../scripts/sync-skills');
+    console.log('Syncing Pinchtab skill files...\n');
+    const { updated, skipped } = syncSkills({ verbose: true });
+
+    if (updated.length > 0) {
+      console.log(`\n✓ Updated ${updated.length} skill director${updated.length === 1 ? 'y' : 'ies'}`);
+    } else {
+      console.log('\nNo agent skill directories found to update.');
+      console.log('Skill directories are synced only where agents are already installed.');
+    }
+
+    if (skipped.length > 0) {
+      console.log(`⚠ Skipped ${skipped.length} (permission errors)`);
+    }
+  } catch (err) {
+    console.error(`Failed to sync skills: ${err.message}`);
+    process.exit(1);
+  }
+  process.exit(0);
+}
+
+if (args[0] === 'skill' && args[1] === 'list') {
+  try {
+    const { getTargetSkillDirs, getBundledSkillsDir } = require('../scripts/sync-skills');
+    const bundled = getBundledSkillsDir();
+    console.log(`Bundled skills: ${fs.existsSync(bundled) ? bundled : '(not found)'}`);
+    console.log('\nDetected agent skill directories:');
+    const targets = getTargetSkillDirs();
+    if (targets.length === 0) {
+      console.log('  (none found)');
+    } else {
+      targets.forEach((t) => {
+        const exists = fs.existsSync(t);
+        console.log(`  ${exists ? '●' : '○'} ${t}${exists ? '' : ' (will be created on sync)'}`);
+      });
+    }
+  } catch (err) {
+    console.error(`Failed to list skills: ${err.message}`);
+    process.exit(1);
+  }
+  process.exit(0);
+}
+
+if (args[0] === 'skill') {
+  console.log('Usage: pinchtab skill <command>\n');
+  console.log('Commands:');
+  console.log('  update    Sync bundled skill files to agent directories');
+  console.log('  list      Show detected agent skill directories');
+  process.exit(0);
+}
+
 const binaryPath = getBinaryPath();
 
 // Check binary exists
