@@ -374,7 +374,9 @@ async function downloadBinary(platform, version) {
       const { syncSkills } = require('./sync-skills');
       const { updated } = syncSkills({ verbose: false });
       if (updated.length > 0) {
-        console.log(`✓ Synced skill files to ${updated.length} agent director${updated.length === 1 ? 'y' : 'ies'}`);
+        console.log(
+          `✓ Synced skill files to ${updated.length} agent director${updated.length === 1 ? 'y' : 'ies'}`
+        );
       }
     } catch (_err) {
       // Non-fatal: skill sync failure shouldn't block install

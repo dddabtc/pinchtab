@@ -120,7 +120,9 @@ if (require.main === module) {
   const { updated, skipped } = syncSkills({ verbose });
 
   if (updated.length > 0) {
-    console.log(`\n✓ Updated ${updated.length} skill director${updated.length === 1 ? 'y' : 'ies'}`);
+    console.log(
+      `\n✓ Updated ${updated.length} skill director${updated.length === 1 ? 'y' : 'ies'}`
+    );
   } else {
     console.log('\nNo agent skill directories found to update.');
     console.log('Skill directories are synced only where agents are already installed.');
