@@ -50,6 +50,8 @@ REQUIRED=(
   "dist/src/index.js"
   "dist/src/index.d.ts"
   "scripts/postinstall.js"
+  "scripts/sync-skills.js"
+  "skills/pinchtab/SKILL.md"
   "bin/pinchtab"
   "LICENSE"
 )
@@ -63,6 +65,7 @@ for file in "${REQUIRED[@]}"; do
 done
 
 node -c scripts/postinstall.js
+node -c scripts/sync-skills.js
 
 node -e "
   const pkg = require('./package.json');

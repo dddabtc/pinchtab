@@ -369,6 +369,19 @@ async function downloadBinary(platform, version) {
       }
     }
 
+    // Sync bundled skill files to detected agent directories
+    try {
+      const { syncSkills } = require('./sync-skills');
+      const { updated } = syncSkills({ verbose: false });
+      if (updated.length > 0) {
+        console.log(
+          `✓ Synced skill files to ${updated.length} agent director${updated.length === 1 ? 'y' : 'ies'}`
+        );
+      }
+    } catch (_err) {
+      // Non-fatal: skill sync failure shouldn't block install
+    }
+
     console.log('✓ Pinchtab setup complete');
     process.exit(0);
   } catch (err) {
