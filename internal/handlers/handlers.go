@@ -137,6 +137,8 @@ func (h *Handlers) RegisterRoutes(mux *http.ServeMux, doShutdown func()) {
 	mux.HandleFunc("POST /tabs/{id}/cookies", h.HandleTabSetCookies)
 	mux.HandleFunc("GET /cookies", h.HandleGetCookies)
 	mux.HandleFunc("POST /cookies", h.HandleSetCookies)
+	mux.HandleFunc("POST /solve-cloudflare", h.HandleSolveCloudflare)
+	mux.HandleFunc("POST /tabs/{id}/solve-cloudflare", h.HandleTabSolveCloudflare)
 	mux.HandleFunc("POST /fingerprint/rotate", h.HandleFingerprintRotate)
 	mux.HandleFunc("GET /stealth/status", h.HandleStealthStatus)
 	mux.HandleFunc("GET /tabs/{id}/download", h.HandleTabDownload)

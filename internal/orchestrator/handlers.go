@@ -78,6 +78,7 @@ func (o *Orchestrator) registerHandlers(mux *http.ServeMux, skipLaunch bool) {
 		"POST /tabs/{id}/forward",
 		"POST /tabs/{id}/reload",
 		"POST /tabs/{id}/wait",
+		"POST /tabs/{id}/solve-cloudflare",
 	} {
 		mux.HandleFunc(route, o.proxyTabRequest)
 	}
