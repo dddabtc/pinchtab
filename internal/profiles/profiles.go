@@ -10,22 +10,55 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/pinchtab/pinchtab/internal/bridge"
-	"github.com/pinchtab/pinchtab/internal/idutil"
+	"github.com/pinchtab/pinchtab/internal/ids"
 )
 
-var idMgr = idutil.NewManager()
+var idMgr = ids.NewManager()
+
+var reservedWindowsProfileNames = map[string]struct{}{
+	"CON":  {},
+	"PRN":  {},
+	"AUX":  {},
+	"NUL":  {},
+	"COM1": {},
+	"COM2": {},
+	"COM3": {},
+	"COM4": {},
+	"COM5": {},
+	"COM6": {},
+	"COM7": {},
+	"COM8": {},
+	"COM9": {},
+	"LPT1": {},
+	"LPT2": {},
+	"LPT3": {},
+	"LPT4": {},
+	"LPT5": {},
+	"LPT6": {},
+	"LPT7": {},
+	"LPT8": {},
+	"LPT9": {},
+}
 
 func profileID(name string) string {
 	return idMgr.ProfileID(name)
 }
 
-// ValidateProfileName checks that a profile name is safe and doesn't contain
-// path traversal characters like "..", "/", or "\".
+// ValidateProfileName enforces a cross-platform-safe profile name policy for
+// filesystem usage and shell-adjacent process cleanup on Windows.
 func ValidateProfileName(name string) error {
 	if name == "" {
 		return fmt.Errorf("profile name cannot be empty")
+	}
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return fmt.Errorf("profile name cannot be blank")
+	}
+	if trimmed != name {
+		return fmt.Errorf("profile name cannot start or end with whitespace")
 	}
 	if strings.Contains(name, "..") {
 		return fmt.Errorf("profile name cannot contain '..'")
@@ -33,7 +66,27 @@ func ValidateProfileName(name string) error {
 	if strings.ContainsAny(name, "/\\") {
 		return fmt.Errorf("profile name cannot contain '/' or '\\'")
 	}
+	if strings.HasSuffix(name, ".") {
+		return fmt.Errorf("profile name cannot end with '.'")
+	}
+	for _, r := range name {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == ' ' || r == '-' || r == '_' || r == '.' {
+			continue
+		}
+		return fmt.Errorf("profile name contains invalid character %q", r)
+	}
+	base := name
+	if dot := strings.IndexRune(base, '.'); dot >= 0 {
+		base = base[:dot]
+	}
+	if _, reserved := reservedWindowsProfileNames[strings.ToUpper(base)]; reserved {
+		return fmt.Errorf("profile name cannot use reserved device name %q", base)
+	}
 	return nil
+}
+
+func isProfileNameValidationError(err error) bool {
+	return err != nil && strings.HasPrefix(err.Error(), "profile name ")
 }
 
 type ProfileManager struct {
@@ -235,26 +288,34 @@ func (pm *ProfileManager) Import(name, sourcePath string) error {
 		return fmt.Errorf("profile %q already exists", name)
 	}
 
-	if _, err := os.Stat(filepath.Join(sourcePath, "Default")); err != nil {
-		if _, err2 := os.Stat(filepath.Join(sourcePath, "Preferences")); err2 != nil {
+	resolvedSourcePath, err := resolveImportSourcePath(sourcePath)
+	if err != nil {
+		return err
+	}
+
+	if _, err := os.Stat(filepath.Join(resolvedSourcePath, "Default")); err != nil {
+		if _, err2 := os.Stat(filepath.Join(resolvedSourcePath, "Preferences")); err2 != nil {
 			return fmt.Errorf("source doesn't look like a Chrome user data dir (no Default/ or Preferences found)")
 		}
 	}
 
-	srcInfo, err := os.Stat(sourcePath)
+	srcInfo, err := os.Lstat(resolvedSourcePath)
 	if err != nil {
 		return fmt.Errorf("source path invalid: %w", err)
+	}
+	if srcInfo.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("source path must not be a symlink")
 	}
 	if !srcInfo.IsDir() {
 		return fmt.Errorf("source path must be a directory")
 	}
 
-	slog.Info("importing profile", "name", name, "source", sourcePath)
-	if err := copyDir(sourcePath, dest); err != nil {
+	slog.Info("importing profile", "name", name, "source", resolvedSourcePath)
+	if err := copyDir(resolvedSourcePath, dest); err != nil {
 		return fmt.Errorf("copy failed: %w", err)
 	}
 
-	if err := os.WriteFile(filepath.Join(dest, ".pinchtab-imported"), []byte(sourcePath), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dest, ".pinchtab-imported"), []byte(resolvedSourcePath), 0600); err != nil {
 		slog.Warn("failed to write import marker", "err", err)
 	}
 	return writeProfileMeta(dest, ProfileMeta{
@@ -300,6 +361,51 @@ func (pm *ProfileManager) Create(name string) error {
 	})
 }
 
+func resolveImportSourcePath(sourcePath string) (string, error) {
+	if sourcePath == "" {
+		return "", fmt.Errorf("source path required")
+	}
+
+	cleaned := filepath.Clean(sourcePath)
+	if !filepath.IsAbs(cleaned) {
+		abs, err := filepath.Abs(cleaned)
+		if err != nil {
+			return "", fmt.Errorf("source path invalid: %w", err)
+		}
+		cleaned = abs
+	}
+
+	roots, err := allowedImportRoots()
+	if err != nil {
+		return "", err
+	}
+	for _, root := range roots {
+		if pathWithinRoot(cleaned, root) {
+			return cleaned, nil
+		}
+	}
+	return "", fmt.Errorf("source path must be within %s", strings.Join(roots, " or "))
+}
+
+func allowedImportRoots() ([]string, error) {
+	roots := []string{filepath.Clean(os.TempDir())}
+
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("resolve home dir: %w", err)
+	}
+	roots = append(roots, filepath.Clean(homeDir))
+	return roots, nil
+}
+
+func pathWithinRoot(path, root string) bool {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (!strings.HasPrefix(rel, ".."+string(os.PathSeparator)) && rel != "..")
+}
+
 func (pm *ProfileManager) CreateWithMeta(name string, meta ProfileMeta) error {
 	if err := pm.Create(name); err != nil {
 		return err
@@ -326,6 +432,12 @@ func (pm *ProfileManager) Reset(name string) error {
 		return err
 	}
 
+	resetProfileDir(dir)
+	slog.Info("profile reset", "name", name)
+	return nil
+}
+
+func resetProfileDir(dir string) {
 	nukeDirs := []string{
 		"Default/Sessions",
 		"Default/Session Storage",
@@ -355,9 +467,6 @@ func (pm *ProfileManager) Reset(name string) error {
 	for _, f := range nukeFiles {
 		_ = os.Remove(filepath.Join(dir, f))
 	}
-
-	slog.Info("profile reset", "name", name)
-	return nil
 }
 
 func (pm *ProfileManager) Delete(name string) error {

@@ -1,16 +1,15 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"strings"
 
 	"github.com/pinchtab/pinchtab/internal/cli"
 	"github.com/pinchtab/pinchtab/internal/config"
+	"github.com/pinchtab/pinchtab/internal/config/workflow"
 	"github.com/pinchtab/pinchtab/internal/server"
 	"github.com/spf13/cobra"
 )
@@ -21,7 +20,7 @@ var configCmd = &cobra.Command{
 	Use:   "config",
 	Short: "Manage configuration",
 	Run: func(cmd *cobra.Command, args []string) {
-		handleConfigOverview(loadConfig())
+		handleConfigOverview(loadLocalConfig())
 	},
 }
 
@@ -31,7 +30,7 @@ func init() {
 		Use:   "show",
 		Short: "Display current configuration",
 		Run: func(cmd *cobra.Command, args []string) {
-			cfg := config.Load()
+			cfg := loadLocalConfig()
 			cli.HandleConfigShow(cfg)
 		},
 	})
@@ -210,7 +209,7 @@ func editConfigSelection(title, path, current string, values []string) (*config.
 		return nil, false, nil
 	}
 
-	nextCfg, changed, err := updateConfigValue(path, picked)
+	nextCfg, changed, err := workflow.UpdateValue(path, picked)
 	if err != nil {
 		return nil, false, err
 	}
@@ -231,8 +230,7 @@ func copyConfigToken(token string) error {
 		return nil
 	}
 
-	fmt.Println(cli.StyleStdout(cli.WarningStyle, "Clipboard unavailable; copy the token manually:"))
-	fmt.Println(cli.StyleStdout(cli.ValueStyle, token))
+	fmt.Println(cli.StyleStdout(cli.WarningStyle, "Clipboard unavailable; token not shown for safety."))
 	return nil
 }
 
@@ -285,10 +283,7 @@ func clipboardCommands() []clipboardCommand {
 }
 
 func handleConfigInit() {
-	configPath := os.Getenv("PINCHTAB_CONFIG")
-	if configPath == "" {
-		configPath = config.DefaultConfigPath()
-	}
+	configPath := workflow.CurrentConfigPath()
 
 	if _, err := os.Stat(configPath); err == nil {
 		fmt.Printf("Config file already exists at %s\n", configPath)
@@ -300,20 +295,7 @@ func handleConfigInit() {
 		}
 	}
 
-	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
-		fmt.Printf("Error creating directory: %v\n", err)
-		os.Exit(1)
-	}
-
-	fc := config.DefaultFileConfig()
-	token, err := config.GenerateAuthToken()
-	if err != nil {
-		fmt.Printf("Error generating auth token: %v\n", err)
-		os.Exit(1)
-	}
-	fc.Server.Token = token
-
-	if err := config.SaveFileConfig(&fc, configPath); err != nil {
+	if err := workflow.InitDefaultConfig(configPath); err != nil {
 		fmt.Printf("Error writing config: %v\n", err)
 		os.Exit(1)
 	}
@@ -322,42 +304,27 @@ func handleConfigInit() {
 }
 
 func handleConfigPath() {
-	configPath := os.Getenv("PINCHTAB_CONFIG")
-	if configPath == "" {
-		configPath = config.DefaultConfigPath()
-	}
-	fmt.Println(configPath)
+	fmt.Println(workflow.CurrentConfigPath())
 }
 
 func handleConfigGet(path string) {
-	fc, _, err := config.LoadFileConfig()
-	if err != nil {
-		fmt.Printf("Error loading config: %v\n", err)
-		os.Exit(1)
-	}
-
-	value, err := config.GetConfigValue(fc, path)
+	value, err := workflow.GetValue(path)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Println(value)
+	fmt.Println(displayConfigValue(path, value))
 }
 
 func handleConfigSet(path, value string) {
-	fc, configPath, err := config.LoadFileConfig()
+	change, err := workflow.PrepareSetValue(path, value)
 	if err != nil {
-		fmt.Printf("Error loading config: %v\n", err)
-		os.Exit(1)
-	}
-
-	if err := config.SetConfigValue(fc, path, value); err != nil {
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
 	}
 
-	if errs := config.ValidateFileConfig(fc); len(errs) > 0 {
+	if errs := change.ValidationErrors; len(errs) > 0 {
 		fmt.Printf("Warning: new value causes validation error(s):\n")
 		for _, err := range errs {
 			fmt.Printf("  - %v\n", err)
@@ -370,27 +337,29 @@ func handleConfigSet(path, value string) {
 		}
 	}
 
-	if err := config.SaveFileConfig(fc, configPath); err != nil {
+	if err := workflow.SavePreparedChange(change); err != nil {
 		fmt.Printf("Error saving config: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("Set %s = %s\n", path, value)
+	fmt.Printf("Set %s = %s\n", path, displayConfigValue(path, value))
+}
+
+func displayConfigValue(path, value string) string {
+	if strings.EqualFold(strings.TrimSpace(path), "server.token") {
+		return config.MaskToken(value)
+	}
+	return value
 }
 
 func handleConfigPatch(jsonPatch string) {
-	fc, configPath, err := config.LoadFileConfig()
+	change, err := workflow.PreparePatch(jsonPatch)
 	if err != nil {
-		fmt.Printf("Error loading config: %v\n", err)
-		os.Exit(1)
-	}
-
-	if err := config.PatchConfigJSON(fc, jsonPatch); err != nil {
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
 	}
 
-	if errs := config.ValidateFileConfig(fc); len(errs) > 0 {
+	if errs := change.ValidationErrors; len(errs) > 0 {
 		fmt.Printf("Warning: patch causes validation error(s):\n")
 		for _, err := range errs {
 			fmt.Printf("  - %v\n", err)
@@ -403,7 +372,7 @@ func handleConfigPatch(jsonPatch string) {
 		}
 	}
 
-	if err := config.SaveFileConfig(fc, configPath); err != nil {
+	if err := workflow.SavePreparedChange(change); err != nil {
 		fmt.Printf("Error saving config: %v\n", err)
 		os.Exit(1)
 	}
@@ -412,23 +381,13 @@ func handleConfigPatch(jsonPatch string) {
 }
 
 func handleConfigValidate() {
-	configPath := os.Getenv("PINCHTAB_CONFIG")
-	if configPath == "" {
-		configPath = config.DefaultConfigPath()
-	}
-	data, err := os.ReadFile(configPath)
+	configPath, errs, err := workflow.ValidateCurrentFile()
 	if err != nil {
-		fmt.Printf("Error reading config file: %v\n", err)
+		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
 	}
 
-	fc := &config.FileConfig{}
-	if err := json.Unmarshal(data, fc); err != nil {
-		fmt.Printf("Error parsing config: %v\n", err)
-		os.Exit(1)
-	}
-
-	if errs := config.ValidateFileConfig(fc); len(errs) > 0 {
+	if len(errs) > 0 {
 		fmt.Printf("Config file has %d error(s):\n", len(errs))
 		for _, err := range errs {
 			fmt.Printf("  - %v\n", err)

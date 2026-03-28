@@ -11,8 +11,10 @@ import (
 	"github.com/pinchtab/pinchtab/internal/config"
 	"github.com/pinchtab/pinchtab/internal/dashboard"
 	"github.com/pinchtab/pinchtab/internal/engine"
-	"github.com/pinchtab/pinchtab/internal/idutil"
-	"github.com/pinchtab/pinchtab/internal/semantic"
+	"github.com/pinchtab/pinchtab/internal/idpi"
+	"github.com/pinchtab/pinchtab/internal/ids"
+	"github.com/pinchtab/semantic"
+	"github.com/pinchtab/semantic/recovery"
 )
 
 type Handlers struct {
@@ -21,16 +23,19 @@ type Handlers struct {
 	Profiles     bridge.ProfileService
 	Dashboard    *dashboard.Dashboard
 	Orchestrator bridge.OrchestratorService
-	IdMgr        *idutil.Manager
+	IdMgr        *ids.Manager
 	Matcher      semantic.ElementMatcher
-	IntentCache  *semantic.IntentCache
-	Recovery     *semantic.RecoveryEngine
+	IntentCache  *recovery.IntentCache
+	Recovery     *recovery.RecoveryEngine
 	Router       *engine.Router // optional; nil ⇒ chrome-only
+	IDPIGuard    idpi.Guard
+	Version      string // build version injected at startup
+	clipboard    clipboardStore
 }
 
 func New(b bridge.BridgeAPI, cfg *config.RuntimeConfig, p bridge.ProfileService, d *dashboard.Dashboard, o bridge.OrchestratorService) *Handlers {
 	matcher := semantic.NewCombinedMatcher(semantic.NewHashingEmbedder(128))
-	intentCache := semantic.NewIntentCache(200, 10*time.Minute)
+	intentCache := recovery.NewIntentCache(200, 10*time.Minute)
 
 	h := &Handlers{
 		Bridge:       b,
@@ -38,15 +43,16 @@ func New(b bridge.BridgeAPI, cfg *config.RuntimeConfig, p bridge.ProfileService,
 		Profiles:     p,
 		Dashboard:    d,
 		Orchestrator: o,
-		IdMgr:        idutil.NewManager(),
+		IdMgr:        ids.NewManager(),
 		Matcher:      matcher,
 		IntentCache:  intentCache,
+		IDPIGuard:    idpi.NewGuard(cfg.IDPI),
 	}
 
 	// Wire up the recovery engine with callbacks that delegate back to
 	// the handler's bridge without introducing circular imports.
-	h.Recovery = semantic.NewRecoveryEngine(
-		semantic.DefaultRecoveryConfig(),
+	h.Recovery = recovery.NewRecoveryEngine(
+		recovery.DefaultRecoveryConfig(),
 		matcher,
 		intentCache,
 		// SnapshotRefresher
@@ -135,7 +141,13 @@ func (h *Handlers) RegisterRoutes(mux *http.ServeMux, doShutdown func()) {
 	mux.HandleFunc("POST /tabs/{id}/cookies", h.HandleTabSetCookies)
 	mux.HandleFunc("GET /cookies", h.HandleGetCookies)
 	mux.HandleFunc("POST /cookies", h.HandleSetCookies)
+	mux.HandleFunc("GET /solvers", h.HandleListSolvers)
+	mux.HandleFunc("POST /solve", h.HandleSolve)
+	mux.HandleFunc("POST /solve/{name}", h.HandleSolve)
+	mux.HandleFunc("POST /tabs/{id}/solve", h.HandleTabSolve)
+	mux.HandleFunc("POST /tabs/{id}/solve/{name}", h.HandleTabSolve)
 	mux.HandleFunc("POST /fingerprint/rotate", h.HandleFingerprintRotate)
+	mux.HandleFunc("GET /stealth/status", h.HandleStealthStatus)
 	mux.HandleFunc("GET /tabs/{id}/download", h.HandleTabDownload)
 	mux.HandleFunc("POST /tabs/{id}/upload", h.HandleTabUpload)
 	mux.HandleFunc("GET /download", h.HandleDownload)
@@ -146,17 +158,29 @@ func (h *Handlers) RegisterRoutes(mux *http.ServeMux, doShutdown func()) {
 	mux.HandleFunc("GET /screencast/tabs", h.HandleScreencastAll)
 	mux.HandleFunc("POST /tabs/{id}/evaluate", h.HandleTabEvaluate)
 	mux.HandleFunc("POST /evaluate", h.HandleEvaluate)
+	mux.HandleFunc("GET /clipboard/read", h.HandleClipboardRead)
+	mux.HandleFunc("POST /clipboard/write", h.HandleClipboardWrite)
+	mux.HandleFunc("POST /clipboard/copy", h.HandleClipboardCopy)
+	mux.HandleFunc("GET /clipboard/paste", h.HandleClipboardPaste)
 	mux.HandleFunc("GET /network", h.HandleNetwork)
 	mux.HandleFunc("GET /network/stream", h.HandleNetworkStream)
+	mux.HandleFunc("GET /network/export", h.HandleNetworkExport)
+	mux.HandleFunc("GET /network/export/stream", h.HandleNetworkExportStream)
 	mux.HandleFunc("GET /network/{requestId}", h.HandleNetworkByID)
 	mux.HandleFunc("POST /network/clear", h.HandleNetworkClear)
 	mux.HandleFunc("GET /tabs/{id}/network", h.HandleTabNetwork)
 	mux.HandleFunc("GET /tabs/{id}/network/stream", h.HandleTabNetworkStream)
+	mux.HandleFunc("GET /tabs/{id}/network/export", h.HandleTabNetworkExport)
+	mux.HandleFunc("GET /tabs/{id}/network/export/stream", h.HandleTabNetworkExportStream)
 	mux.HandleFunc("GET /tabs/{id}/network/{requestId}", h.HandleTabNetworkByID)
 	mux.HandleFunc("POST /dialog", h.HandleDialog)
 	mux.HandleFunc("POST /tabs/{id}/dialog", h.HandleTabDialog)
 	mux.HandleFunc("POST /wait", h.HandleWait)
 	mux.HandleFunc("POST /tabs/{id}/wait", h.HandleTabWait)
+	mux.HandleFunc("GET /console", h.HandleGetConsoleLogs)
+	mux.HandleFunc("POST /console/clear", h.HandleClearConsoleLogs)
+	mux.HandleFunc("GET /errors", h.HandleGetErrorLogs)
+	mux.HandleFunc("POST /errors/clear", h.HandleClearErrorLogs)
 	mux.HandleFunc("GET /welcome", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte(assets.WelcomeHTML))

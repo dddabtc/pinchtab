@@ -23,6 +23,8 @@
     "dist/src",
     "bin",
     "scripts/postinstall.js",
+    "scripts/sync-skills.js",
+    "skills",
     "LICENSE"
   ],
   "keywords": [

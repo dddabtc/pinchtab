@@ -14,9 +14,10 @@ import (
 
 	"github.com/pinchtab/pinchtab/internal/bridge"
 	"github.com/pinchtab/pinchtab/internal/engine"
+	"github.com/pinchtab/pinchtab/internal/httpx"
 	"github.com/pinchtab/pinchtab/internal/selector"
-	"github.com/pinchtab/pinchtab/internal/semantic"
-	"github.com/pinchtab/pinchtab/internal/web"
+	"github.com/pinchtab/semantic"
+	"github.com/pinchtab/semantic/recovery"
 )
 
 func resolveOwner(r *http.Request, fallback string) string {
@@ -83,14 +84,14 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodySize)).Decode(&req); err != nil {
-			web.Error(w, 400, fmt.Errorf("decode: %w", err))
+			httpx.Error(w, 400, fmt.Errorf("decode: %w", err))
 			return
 		}
 	}
 
 	// Validate kind — single endpoint returns 400 for bad input (unlike batch which returns 200 with errors)
 	if req.Kind == "" {
-		web.Error(w, 400, fmt.Errorf("missing required field 'kind'"))
+		httpx.Error(w, 400, fmt.Errorf("missing required field 'kind'"))
 		return
 	}
 	h.recordActionRequest(r, req)
@@ -104,7 +105,7 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			if !known {
-				web.Error(w, 400, fmt.Errorf("unknown action kind: %s", req.Kind))
+				httpx.Error(w, 400, fmt.Errorf("unknown action kind: %s", req.Kind))
 				return
 			}
 		}
@@ -121,7 +122,7 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 		var err error
 		ctx, resolvedTabID, err = h.tabContext(r, req.TabID)
 		if err != nil {
-			web.Error(w, 404, err)
+			httpx.Error(w, 404, err)
 			return
 		}
 		if req.TabID == "" {
@@ -129,7 +130,10 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 		}
 		owner := resolveOwner(r, req.Owner)
 		if err := h.enforceTabLease(resolvedTabID, owner); err != nil {
-			web.ErrorCode(w, 423, "tab_locked", err.Error(), false, nil)
+			httpx.ErrorCode(w, 423, "tab_locked", err.Error(), false, nil)
+			return
+		}
+		if _, ok := h.enforceCurrentTabDomainPolicy(w, r, ctx, resolvedTabID); !ok {
 			return
 		}
 	}
@@ -149,7 +153,7 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 
 	tCtx, tCancel := context.WithTimeout(ctx, actionTimeout)
 	defer tCancel()
-	go web.CancelOnClientDone(r.Context(), tCancel)
+	go httpx.CancelOnClientDone(r.Context(), tCancel)
 
 	// Unified selector resolution: normalize legacy ref/selector fields
 	// into the unified Selector, then resolve to a nodeID when possible.
@@ -183,7 +187,7 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 		case selector.KindXPath:
 			nid, err := bridge.ResolveXPathToNodeID(tCtx, sel.Value)
 			if err != nil {
-				web.Error(w, 400, fmt.Errorf("xpath selector: %w", err))
+				httpx.Error(w, 400, fmt.Errorf("xpath selector: %w", err))
 				return
 			}
 			req.NodeID = nid
@@ -192,7 +196,7 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 		case selector.KindText:
 			nid, err := bridge.ResolveTextToNodeID(tCtx, sel.Value)
 			if err != nil {
-				web.Error(w, 400, fmt.Errorf("text selector: %w", err))
+				httpx.Error(w, 400, fmt.Errorf("text selector: %w", err))
 				return
 			}
 			req.NodeID = nid
@@ -217,7 +221,7 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 						Threshold: 0.3, TopK: 1,
 					})
 					if err != nil {
-						web.Error(w, 500, fmt.Errorf("semantic selector: %w", err))
+						httpx.Error(w, 500, fmt.Errorf("semantic selector: %w", err))
 						return
 					}
 					if result.BestRef != "" {
@@ -230,15 +234,15 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 						}
 					}
 					if req.NodeID == 0 {
-						web.Error(w, 404, fmt.Errorf("semantic selector %q: no matching element found", sel.Value))
+						httpx.Error(w, 404, fmt.Errorf("semantic selector %q: no matching element found", sel.Value))
 						return
 					}
 				} else {
-					web.Error(w, 500, fmt.Errorf("semantic selector: no snapshot available — navigate first"))
+					httpx.Error(w, 500, fmt.Errorf("semantic selector: no snapshot available — navigate first"))
 					return
 				}
 			} else {
-				web.Error(w, 501, fmt.Errorf("semantic selectors require a matcher (not configured)"))
+				httpx.Error(w, 501, fmt.Errorf("semantic selectors require a matcher (not configured)"))
 				return
 			}
 			req.Selector = ""
@@ -258,7 +262,7 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 	var result map[string]any
 	var engineName string
 	var actionErr error
-	var recoveryResult *semantic.RecoveryResult
+	var recoveryResult *recovery.RecoveryResult
 
 	if refMissing && req.Ref != "" && h.Recovery != nil {
 		rr, actionRes, recoveryErr := h.Recovery.Attempt(
@@ -276,7 +280,7 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 			actionErr = fmt.Errorf("ref %s not found and recovery failed: %w", req.Ref, recoveryErr)
 		}
 	} else if refMissing {
-		web.Error(w, 404, fmt.Errorf("ref %s not found - take a /snapshot first", req.Ref))
+		httpx.Error(w, 404, fmt.Errorf("ref %s not found - take a /snapshot first", req.Ref))
 		return
 	} else {
 		result, engineName, actionErr = h.executeAction(tCtx, req)
@@ -295,7 +299,7 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 		if actionErr != nil && req.Ref != "" && h.Recovery != nil && h.Recovery.ShouldAttempt(actionErr, req.Ref) {
 			rr, actionRes, recoveryErr := h.Recovery.AttemptWithClassification(
 				tCtx, resolvedTabID, req.Ref, req.Kind,
-				semantic.ClassifyFailure(actionErr),
+				recovery.ClassifyFailure(actionErr),
 				func(ctx context.Context, kind string, nodeID int64) (map[string]any, error) {
 					req.NodeID = nodeID
 					res, _, err := h.executeAction(ctx, req)
@@ -312,16 +316,16 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 	if actionErr != nil {
 		if strings.HasPrefix(actionErr.Error(), "unknown action") {
 			kinds := h.Bridge.AvailableActions()
-			web.JSON(w, 400, map[string]string{
+			httpx.JSON(w, 400, map[string]string{
 				"error": fmt.Sprintf("%s - valid values: %s", actionErr.Error(), strings.Join(kinds, ", ")),
 			})
 			return
 		}
 		if errors.Is(actionErr, engine.ErrLiteNotSupported) {
-			web.ErrorCode(w, http.StatusNotImplemented, "not_supported", actionErr.Error(), false, nil)
+			httpx.ErrorCode(w, http.StatusNotImplemented, "not_supported", actionErr.Error(), false, nil)
 			return
 		}
-		web.ErrorCode(w, 500, "action_failed", fmt.Sprintf("action %s: %v", req.Kind, actionErr), true, nil)
+		httpx.ErrorCode(w, 500, "action_failed", fmt.Sprintf("action %s: %v", req.Kind, actionErr), true, nil)
 		return
 	}
 
@@ -333,7 +337,7 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 	if recoveryResult != nil {
 		resp["recovery"] = recoveryResult
 	}
-	web.JSON(w, 200, resp)
+	httpx.JSON(w, 200, resp)
 }
 
 // HandleTabAction performs a single action on a tab identified by path ID.
@@ -342,24 +346,24 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) HandleTabAction(w http.ResponseWriter, r *http.Request) {
 	tabID := r.PathValue("id")
 	if tabID == "" {
-		web.Error(w, 400, fmt.Errorf("tab id required"))
+		httpx.Error(w, 400, fmt.Errorf("tab id required"))
 		return
 	}
 
 	var req bridge.ActionRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodySize)).Decode(&req); err != nil {
-		web.Error(w, 400, fmt.Errorf("decode: %w", err))
+		httpx.Error(w, 400, fmt.Errorf("decode: %w", err))
 		return
 	}
 	if req.TabID != "" && req.TabID != tabID {
-		web.Error(w, 400, fmt.Errorf("tabId in body does not match path id"))
+		httpx.Error(w, 400, fmt.Errorf("tabId in body does not match path id"))
 		return
 	}
 	req.TabID = tabID
 
 	payload, err := json.Marshal(req)
 	if err != nil {
-		web.Error(w, 500, fmt.Errorf("encode: %w", err))
+		httpx.Error(w, 500, fmt.Errorf("encode: %w", err))
 		return
 	}
 
@@ -388,12 +392,12 @@ type actionResult struct {
 func (h *Handlers) HandleActions(w http.ResponseWriter, r *http.Request) {
 	var req actionsRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodySize)).Decode(&req); err != nil {
-		web.Error(w, 400, fmt.Errorf("decode: %w", err))
+		httpx.Error(w, 400, fmt.Errorf("decode: %w", err))
 		return
 	}
 
 	if len(req.Actions) == 0 {
-		web.Error(w, 400, fmt.Errorf("actions array is empty"))
+		httpx.Error(w, 400, fmt.Errorf("actions array is empty"))
 		return
 	}
 
@@ -406,24 +410,24 @@ func (h *Handlers) HandleActions(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) HandleTabActions(w http.ResponseWriter, r *http.Request) {
 	tabID := r.PathValue("id")
 	if tabID == "" {
-		web.Error(w, 400, fmt.Errorf("tab id required"))
+		httpx.Error(w, 400, fmt.Errorf("tab id required"))
 		return
 	}
 
 	var req actionsRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodySize)).Decode(&req); err != nil {
-		web.Error(w, 400, fmt.Errorf("decode: %w", err))
+		httpx.Error(w, 400, fmt.Errorf("decode: %w", err))
 		return
 	}
 	if req.TabID != "" && req.TabID != tabID {
-		web.Error(w, 400, fmt.Errorf("tabId in body does not match path id"))
+		httpx.Error(w, 400, fmt.Errorf("tabId in body does not match path id"))
 		return
 	}
 	req.TabID = tabID
 
 	payload, err := json.Marshal(req)
 	if err != nil {
-		web.Error(w, 500, fmt.Errorf("encode: %w", err))
+		httpx.Error(w, 500, fmt.Errorf("encode: %w", err))
 		return
 	}
 
@@ -448,13 +452,13 @@ func (h *Handlers) handleActionsBatch(w http.ResponseWriter, r *http.Request, re
 		resolvedTabID = req.TabID
 	} else {
 		var err error
-		ctx, resolvedTabID, err = h.Bridge.TabContext(req.TabID)
+		ctx, resolvedTabID, err = h.tabContext(r, req.TabID)
 		if err != nil {
-			web.Error(w, 404, err)
+			httpx.Error(w, 404, err)
 			return
 		}
 		if err := h.enforceTabLease(resolvedTabID, owner); err != nil {
-			web.ErrorCode(w, 423, "tab_locked", err.Error(), false, nil)
+			httpx.ErrorCode(w, 423, "tab_locked", err.Error(), false, nil)
 			return
 		}
 	}
@@ -465,7 +469,7 @@ func (h *Handlers) handleActionsBatch(w http.ResponseWriter, r *http.Request, re
 			action.TabID = resolvedTabID
 		} else if !allLite && action.TabID != resolvedTabID {
 			var err error
-			ctx, resolvedTabID, err = h.Bridge.TabContext(action.TabID)
+			ctx, resolvedTabID, err = h.tabContext(r, action.TabID)
 			if err != nil {
 				results = append(results, actionResult{
 					Index: i, Success: false,
@@ -482,6 +486,11 @@ func (h *Handlers) handleActionsBatch(w http.ResponseWriter, r *http.Request, re
 					break
 				}
 				continue
+			}
+		}
+		if !allLite {
+			if _, ok := h.enforceCurrentTabDomainPolicy(w, r, ctx, resolvedTabID); !ok {
+				return
 			}
 		}
 
@@ -662,7 +671,7 @@ func (h *Handlers) handleActionsBatch(w http.ResponseWriter, r *http.Request, re
 			if err != nil && action.Ref != "" && h.Recovery != nil && h.Recovery.ShouldAttempt(err, action.Ref) {
 				rr, recRes, recErr := h.Recovery.AttemptWithClassification(
 					tCtx, resolvedTabID, action.Ref, action.Kind,
-					semantic.ClassifyFailure(err),
+					recovery.ClassifyFailure(err),
 					func(ctx context.Context, kind string, nodeID int64) (map[string]any, error) {
 						action.NodeID = nodeID
 						res, _, err := h.executeAction(ctx, action)
@@ -697,7 +706,7 @@ func (h *Handlers) handleActionsBatch(w http.ResponseWriter, r *http.Request, re
 		}
 	}
 
-	web.JSON(w, 200, map[string]any{
+	httpx.JSON(w, 200, map[string]any{
 		"results":    results,
 		"total":      len(req.Actions),
 		"successful": countSuccessful(results),
@@ -707,7 +716,7 @@ func (h *Handlers) handleActionsBatch(w http.ResponseWriter, r *http.Request, re
 
 func (h *Handlers) HandleMacro(w http.ResponseWriter, r *http.Request) {
 	if !h.Config.AllowMacro {
-		web.ErrorCode(w, 403, "macro_disabled", web.DisabledEndpointMessage("macro", "security.allowMacro"), false, map[string]any{
+		httpx.ErrorCode(w, 403, "macro_disabled", httpx.DisabledEndpointMessage("macro", "security.allowMacro"), false, map[string]any{
 			"setting": "security.allowMacro",
 		})
 		return
@@ -720,11 +729,11 @@ func (h *Handlers) HandleMacro(w http.ResponseWriter, r *http.Request) {
 		StepTimeout float64                `json:"stepTimeout"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodySize)).Decode(&req); err != nil {
-		web.ErrorCode(w, 400, "bad_request", fmt.Sprintf("decode: %v", err), false, nil)
+		httpx.ErrorCode(w, 400, "bad_request", fmt.Sprintf("decode: %v", err), false, nil)
 		return
 	}
 	if len(req.Steps) == 0 {
-		web.ErrorCode(w, 400, "bad_request", "steps array is empty", false, nil)
+		httpx.ErrorCode(w, 400, "bad_request", "steps array is empty", false, nil)
 		return
 	}
 	owner := resolveOwner(r, req.Owner)
@@ -741,13 +750,13 @@ func (h *Handlers) HandleMacro(w http.ResponseWriter, r *http.Request) {
 		resolvedTabID = req.TabID
 	} else {
 		var err error
-		ctx, resolvedTabID, err = h.Bridge.TabContext(req.TabID)
+		ctx, resolvedTabID, err = h.tabContext(r, req.TabID)
 		if err != nil {
-			web.Error(w, 404, err)
+			httpx.Error(w, 404, err)
 			return
 		}
 		if err := h.enforceTabLease(resolvedTabID, owner); err != nil {
-			web.ErrorCode(w, 423, "tab_locked", err.Error(), false, nil)
+			httpx.ErrorCode(w, 423, "tab_locked", err.Error(), false, nil)
 			return
 		}
 	}
@@ -756,6 +765,11 @@ func (h *Handlers) HandleMacro(w http.ResponseWriter, r *http.Request) {
 	for i, step := range req.Steps {
 		if step.TabID == "" {
 			step.TabID = resolvedTabID
+		}
+		if !allLiteMacro {
+			if _, ok := h.enforceCurrentTabDomainPolicy(w, r, ctx, resolvedTabID); !ok {
+				return
+			}
 		}
 		useLiteAction := h.shouldUseLiteAction(step.Kind)
 		// Unified selector resolution for macro steps (mirrors HandleAction).
@@ -920,7 +934,7 @@ func (h *Handlers) HandleMacro(w http.ResponseWriter, r *http.Request) {
 			if err != nil && step.Ref != "" && h.Recovery != nil && h.Recovery.ShouldAttempt(err, step.Ref) {
 				rr, recRes, recErr := h.Recovery.AttemptWithClassification(
 					tCtx, resolvedTabID, step.Ref, step.Kind,
-					semantic.ClassifyFailure(err),
+					recovery.ClassifyFailure(err),
 					func(ctx context.Context, kind string, nodeID int64) (map[string]any, error) {
 						step.NodeID = nodeID
 						res, _, err := h.executeAction(ctx, step)
@@ -945,7 +959,7 @@ func (h *Handlers) HandleMacro(w http.ResponseWriter, r *http.Request) {
 		results = append(results, actionResult{Index: i, Success: true, Result: res})
 	}
 
-	web.JSON(w, 200, map[string]any{
+	httpx.JSON(w, 200, map[string]any{
 		"kind":       "macro",
 		"results":    results,
 		"total":      len(req.Steps),
@@ -988,7 +1002,7 @@ func (h *Handlers) cacheActionIntent(tabID string, req bridge.ActionRequest) {
 			}
 		}
 	}
-	h.Recovery.RecordIntent(tabID, req.Ref, semantic.IntentEntry{
+	h.Recovery.RecordIntent(tabID, req.Ref, recovery.IntentEntry{
 		Descriptor: desc,
 		CachedAt:   time.Now(),
 	})

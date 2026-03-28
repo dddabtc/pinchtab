@@ -92,7 +92,7 @@ func ValidateFileConfig(fc *FileConfig) []error {
 		if !isValidStealthLevel(fc.InstanceDefaults.StealthLevel) {
 			errs = append(errs, ValidationError{
 				Field:   "instanceDefaults.stealthLevel",
-				Message: fmt.Sprintf("invalid value %q (must be light or full)", fc.InstanceDefaults.StealthLevel),
+				Message: fmt.Sprintf("invalid value %q (must be light, medium, or full)", fc.InstanceDefaults.StealthLevel),
 			})
 		}
 	}
@@ -145,8 +145,25 @@ func ValidateFileConfig(fc *FileConfig) []error {
 		}
 	}
 
+	if fc.Browser.ChromeExtraFlags != "" {
+		errs = append(errs, validateChromeExtraFlags(fc.Browser.ChromeExtraFlags)...)
+	}
+
 	// IDPI validation
 	errs = append(errs, validateIDPIConfig(fc.Security.IDPI)...)
+	errs = append(errs, validateAllowedDomainList("security.downloadAllowedDomains", fc.Security.DownloadAllowedDomains)...)
+	errs = append(errs, validatePositiveIntLimit("security.downloadMaxBytes", fc.Security.DownloadMaxBytes, MaxDownloadMaxBytes)...)
+	errs = append(errs, validatePositiveIntLimit("security.uploadMaxRequestBytes", fc.Security.UploadMaxRequestBytes, MaxUploadMaxRequestBytes)...)
+	errs = append(errs, validatePositiveIntLimit("security.uploadMaxFiles", fc.Security.UploadMaxFiles, MaxUploadMaxFiles)...)
+	errs = append(errs, validatePositiveIntLimit("security.uploadMaxFileBytes", fc.Security.UploadMaxFileBytes, MaxUploadMaxFileBytes)...)
+	errs = append(errs, validatePositiveIntLimit("security.uploadMaxTotalBytes", fc.Security.UploadMaxTotalBytes, MaxUploadMaxTotalBytes)...)
+	if fc.Security.UploadMaxFileBytes != nil && fc.Security.UploadMaxTotalBytes != nil &&
+		*fc.Security.UploadMaxFileBytes > *fc.Security.UploadMaxTotalBytes {
+		errs = append(errs, ValidationError{
+			Field:   "security.uploadMaxFileBytes/uploadMaxTotalBytes",
+			Message: fmt.Sprintf("uploadMaxFileBytes (%d) must be <= uploadMaxTotalBytes (%d)", *fc.Security.UploadMaxFileBytes, *fc.Security.UploadMaxTotalBytes),
+		})
+	}
 
 	// Timeouts validation
 	if fc.Timeouts.ActionSec < 0 {
@@ -180,10 +197,10 @@ func ValidateFileConfig(fc *FileConfig) []error {
 			Message: fmt.Sprintf("must be >= 0 (got %d)", *fc.Observability.Activity.SessionIdleSec),
 		})
 	}
-	if fc.Observability.Activity.RetentionDays != nil && *fc.Observability.Activity.RetentionDays < 0 {
+	if fc.Observability.Activity.RetentionDays != nil && *fc.Observability.Activity.RetentionDays <= 0 {
 		errs = append(errs, ValidationError{
 			Field:   "observability.activity.retentionDays",
-			Message: fmt.Sprintf("must be >= 0 (got %d)", *fc.Observability.Activity.RetentionDays),
+			Message: fmt.Sprintf("must be > 0 (got %d)", *fc.Observability.Activity.RetentionDays),
 		})
 	}
 
@@ -228,7 +245,7 @@ func validateBind(bind string, field string) error {
 
 func isValidStealthLevel(level string) bool {
 	switch level {
-	case "light", "full":
+	case "light", "medium", "full":
 		return true
 	default:
 		return false
@@ -246,7 +263,7 @@ func isValidEvictionPolicy(policy string) bool {
 
 func isValidStrategy(strategy string) bool {
 	switch strategy {
-	case "simple", "explicit", "simple-autorestart", "always-on":
+	case "simple", "explicit", "simple-autorestart", "always-on", "no-instance":
 		return true
 	default:
 		return false
@@ -272,7 +289,7 @@ func isValidAttachScheme(scheme string) bool {
 }
 
 func ValidStealthLevels() []string {
-	return []string{"light", "full"}
+	return []string{"light", "medium", "full"}
 }
 
 func ValidEvictionPolicies() []string {
@@ -280,7 +297,7 @@ func ValidEvictionPolicies() []string {
 }
 
 func ValidStrategies() []string {
-	return []string{"simple", "explicit", "simple-autorestart", "always-on"}
+	return []string{"simple", "explicit", "simple-autorestart", "always-on", "no-instance"}
 }
 
 // validateIDPIConfig validates the security.idpi sub-section.
@@ -290,30 +307,7 @@ func validateIDPIConfig(cfg IDPIConfig) []error {
 		return nil
 	}
 
-	var errs []error
-
-	for _, domain := range cfg.AllowedDomains {
-		trimmed := strings.TrimSpace(domain)
-		if trimmed == "" {
-			errs = append(errs, ValidationError{
-				Field:   "security.idpi.allowedDomains",
-				Message: "domain pattern must not be empty or whitespace-only",
-			})
-			continue
-		}
-		if strings.ContainsAny(trimmed, " \t") {
-			errs = append(errs, ValidationError{
-				Field:   "security.idpi.allowedDomains",
-				Message: fmt.Sprintf("domain pattern %q must not contain whitespace", trimmed),
-			})
-		}
-		if strings.HasPrefix(trimmed, "file://") {
-			errs = append(errs, ValidationError{
-				Field:   "security.idpi.allowedDomains",
-				Message: fmt.Sprintf("domain pattern %q must not use the file:// scheme; use a hostname", trimmed),
-			})
-		}
-	}
+	errs := validateAllowedDomainList("security.idpi.allowedDomains", cfg.AllowedDomains)
 
 	for _, p := range cfg.CustomPatterns {
 		if strings.TrimSpace(p) == "" {
@@ -332,6 +326,46 @@ func validateIDPIConfig(cfg IDPIConfig) []error {
 	}
 
 	return errs
+}
+
+func validateAllowedDomainList(field string, domains []string) []error {
+	var errs []error
+	for _, domain := range domains {
+		trimmed := strings.TrimSpace(domain)
+		if trimmed == "" {
+			errs = append(errs, ValidationError{
+				Field:   field,
+				Message: "domain pattern must not be empty or whitespace-only",
+			})
+			continue
+		}
+		if strings.ContainsAny(trimmed, " \t") {
+			errs = append(errs, ValidationError{
+				Field:   field,
+				Message: fmt.Sprintf("domain pattern %q must not contain whitespace", trimmed),
+			})
+		}
+		if strings.HasPrefix(trimmed, "file://") {
+			errs = append(errs, ValidationError{
+				Field:   field,
+				Message: fmt.Sprintf("domain pattern %q must not use the file:// scheme; use a hostname", trimmed),
+			})
+		}
+	}
+	return errs
+}
+
+func validatePositiveIntLimit(field string, value *int, max int) []error {
+	if value == nil {
+		return nil
+	}
+	if *value < 1 || *value > max {
+		return []error{ValidationError{
+			Field:   field,
+			Message: fmt.Sprintf("must be between 1 and %d (got %d)", max, *value),
+		}}
+	}
+	return nil
 }
 
 // ValidAllocationPolicies returns all valid allocation policy values.

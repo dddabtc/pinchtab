@@ -9,8 +9,8 @@ import (
 	"github.com/pinchtab/pinchtab/internal/activity"
 	"github.com/pinchtab/pinchtab/internal/bridge"
 	"github.com/pinchtab/pinchtab/internal/handlers"
+	"github.com/pinchtab/pinchtab/internal/httpx"
 	iproxy "github.com/pinchtab/pinchtab/internal/proxy"
-	"github.com/pinchtab/pinchtab/internal/web"
 )
 
 // proxyTabRequest is a generic handler that proxies requests to the instance
@@ -21,7 +21,7 @@ import (
 func (o *Orchestrator) proxyTabRequest(w http.ResponseWriter, r *http.Request) {
 	tabID := r.PathValue("id")
 	if tabID == "" {
-		web.Error(w, 400, fmt.Errorf("tab id required"))
+		httpx.Error(w, 400, fmt.Errorf("tab id required"))
 		return
 	}
 
@@ -34,7 +34,7 @@ func (o *Orchestrator) proxyTabRequest(w http.ResponseWriter, r *http.Request) {
 		})
 		targetURL, buildErr := o.instancePathURLFromBridge(inst, r.URL.Path, r.URL.RawQuery)
 		if buildErr != nil {
-			web.Error(w, 502, buildErr)
+			httpx.Error(w, 502, buildErr)
 			return
 		}
 		o.proxyToURL(w, r, targetURL)
@@ -68,7 +68,7 @@ func (o *Orchestrator) proxyTabRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	web.Error(w, 404, err)
+	httpx.Error(w, 404, err)
 }
 
 // proxyToInstance proxies a request to a specific instance by ID in the path.
@@ -80,12 +80,12 @@ func (o *Orchestrator) proxyToInstance(w http.ResponseWriter, r *http.Request) {
 	o.mu.RUnlock()
 
 	if !ok {
-		web.Error(w, 404, fmt.Errorf("instance %q not found", id))
+		httpx.Error(w, 404, fmt.Errorf("instance %q not found", id))
 		return
 	}
 
 	if inst.Status != "running" {
-		web.Error(w, 503, fmt.Errorf("instance %q is not running (status: %s)", id, inst.Status))
+		httpx.Error(w, 503, fmt.Errorf("instance %q is not running (status: %s)", id, inst.Status))
 		return
 	}
 	activity.EnrichRequest(r, activity.Update{
@@ -103,7 +103,7 @@ func (o *Orchestrator) proxyToInstance(w http.ResponseWriter, r *http.Request) {
 
 	targetURL, err := o.instancePathURL(inst, targetPath, r.URL.RawQuery)
 	if err != nil {
-		web.Error(w, 502, err)
+		httpx.Error(w, 502, err)
 		return
 	}
 	o.proxyToURL(w, r, targetURL)
@@ -130,6 +130,20 @@ func (o *Orchestrator) proxyToURL(w http.ResponseWriter, r *http.Request, target
 			}
 		},
 	})
+}
+
+// ProxyToTarget proxies a shorthand dashboard request to a managed instance URL,
+// preserving orchestrator-side auth injection for the child bridge.
+func (o *Orchestrator) ProxyToTarget(w http.ResponseWriter, r *http.Request, target string) {
+	targetURL, err := url.Parse(target)
+	if err != nil {
+		httpx.Error(w, 502, fmt.Errorf("proxy error: %w", err))
+		return
+	}
+	if targetURL.RawQuery == "" {
+		targetURL.RawQuery = r.URL.RawQuery
+	}
+	o.proxyToURL(w, r, targetURL)
 }
 
 // findRunningInstanceByTabID finds the instance that owns the given tab.
@@ -164,7 +178,7 @@ func (o *Orchestrator) handleProxyScreencast(w http.ResponseWriter, r *http.Requ
 	inst, ok := o.instances[id]
 	o.mu.RUnlock()
 	if !ok || inst.Status != "running" {
-		web.Error(w, 404, fmt.Errorf("instance not found or not running"))
+		httpx.Error(w, 404, fmt.Errorf("instance not found or not running"))
 		return
 	}
 	activity.EnrichRequest(r, activity.Update{
@@ -175,14 +189,21 @@ func (o *Orchestrator) handleProxyScreencast(w http.ResponseWriter, r *http.Requ
 
 	targetURL, err := o.instancePathURL(inst, "/screencast", r.URL.RawQuery)
 	if err != nil {
-		web.Error(w, 502, err)
+		httpx.Error(w, 502, err)
 		return
 	}
 
 	req := r.Clone(r.Context())
 	req.Header = r.Header.Clone()
 	activity.PropagateHeaders(r.Context(), req)
-	o.applyInstanceAuth(req, inst)
+	req.Header.Del("Authorization")
+	req.Header.Del("Cookie")
+	handlers.SetProxyWSBackendAuthorization(req.Header, "")
+	if token := inst.authToken; token != "" {
+		handlers.SetProxyWSBackendAuthorization(req.Header, "Bearer "+token)
+	} else if token := o.childAuthToken; token != "" {
+		handlers.SetProxyWSBackendAuthorization(req.Header, "Bearer "+token)
+	}
 
 	// Use WebSocket proxy for proper upgrade
 	handlers.ProxyWebSocket(w, req, targetURL.String())
@@ -238,6 +259,12 @@ func (o *Orchestrator) parseHTTPInstanceURL(rawURL, port string) (*url.URL, erro
 	}
 	if parsed.Path != "" && parsed.Path != "/" {
 		return nil, fmt.Errorf("instance URL %q must not include a path", rawURL)
+	}
+	if parsed.User != nil {
+		return nil, fmt.Errorf("instance URL %q must not include userinfo", rawURL)
+	}
+	if parsed.RawQuery != "" || parsed.Fragment != "" {
+		return nil, fmt.Errorf("instance URL %q must not include query or fragment", rawURL)
 	}
 	return parsed, nil
 }

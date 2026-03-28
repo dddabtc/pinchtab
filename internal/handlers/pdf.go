@@ -9,14 +9,14 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
-	"github.com/pinchtab/pinchtab/internal/idpi"
-	"github.com/pinchtab/pinchtab/internal/web"
+	"github.com/pinchtab/pinchtab/internal/httpx"
 )
 
 var pdfQueryParams = map[string]struct{}{
@@ -40,13 +40,26 @@ var pdfQueryParams = map[string]struct{}{
 	"raw":                     {},
 }
 
+var pdfActiveTemplatePattern = regexp.MustCompile(`(?i)<\s*script\b|javascript\s*:|\bon[a-z]+\s*=`)
+
 // HandlePDF generates a PDF of the current tab.
 //
 // @Endpoint GET /pdf
 func (h *Handlers) HandlePDF(w http.ResponseWriter, r *http.Request) {
+	headerTemplate := r.URL.Query().Get("headerTemplate")
+	footerTemplate := r.URL.Query().Get("footerTemplate")
+	if err := validatePDFTemplate(headerTemplate); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := validatePDFTemplate(footerTemplate); err != nil {
+		httpx.Error(w, http.StatusBadRequest, err)
+		return
+	}
+
 	// Ensure Chrome is initialized
 	if err := h.ensureChrome(); err != nil {
-		web.Error(w, 500, fmt.Errorf("chrome initialization: %w", err))
+		httpx.Error(w, 500, fmt.Errorf("chrome initialization: %w", err))
 		return
 	}
 
@@ -54,15 +67,18 @@ func (h *Handlers) HandlePDF(w http.ResponseWriter, r *http.Request) {
 	output := r.URL.Query().Get("output")
 	h.recordReadRequest(r, "pdf", tabID)
 
-	ctx, _, err := h.tabContext(r, tabID)
+	ctx, resolvedTabID, err := h.tabContext(r, tabID)
 	if err != nil {
-		web.Error(w, 404, err)
+		httpx.Error(w, 404, err)
+		return
+	}
+	if _, ok := h.enforceCurrentTabDomainPolicy(w, r, ctx, resolvedTabID); !ok {
 		return
 	}
 
 	tCtx, tCancel := context.WithTimeout(ctx, h.Config.ActionTimeout)
 	defer tCancel()
-	go web.CancelOnClientDone(r.Context(), tCancel)
+	go httpx.CancelOnClientDone(r.Context(), tCancel)
 
 	// Parse PDF parameters from PrintToPDFParams
 	landscape := r.URL.Query().Get("landscape") == "true"
@@ -121,9 +137,6 @@ func (h *Handlers) HandlePDF(w http.ResponseWriter, r *http.Request) {
 	}
 
 	pageRanges := r.URL.Query().Get("pageRanges") // e.g., "1-3,5"
-	headerTemplate := r.URL.Query().Get("headerTemplate")
-	footerTemplate := r.URL.Query().Get("footerTemplate")
-
 	// IDPI: scan page title, URL, and body text for injection patterns before
 	// rendering to PDF. PDF output is opaque binary — any signal is conveyed
 	// via response headers. The scan timeout is taken from IDPI config so
@@ -142,9 +155,9 @@ func (h *Handlers) HandlePDF(w http.ResponseWriter, r *http.Request) {
 			chromedp.Evaluate(`document.body ? document.body.innerText : ""`, &pageText),
 		)
 		corpus := pageTitle + "\n" + pageURL + "\n" + pageText
-		if ir := idpi.ScanContent(corpus, h.Config.IDPI); ir.Threat {
+		if ir := h.IDPIGuard.ScanContent(corpus); ir.Threat {
 			if ir.Blocked {
-				web.Error(w, http.StatusForbidden, fmt.Errorf("idpi: %s", ir.Reason))
+				httpx.Error(w, http.StatusForbidden, fmt.Errorf("idpi: %s", ir.Reason))
 				return
 			}
 			w.Header().Set("X-IDPI-Warning", ir.Reason)
@@ -187,7 +200,7 @@ func (h *Handlers) HandlePDF(w http.ResponseWriter, r *http.Request) {
 			return err
 		}),
 	); err != nil {
-		web.Error(w, 500, fmt.Errorf("pdf: %w", err))
+		httpx.Error(w, 500, fmt.Errorf("pdf: %w", err))
 		return
 	}
 
@@ -196,36 +209,36 @@ func (h *Handlers) HandlePDF(w http.ResponseWriter, r *http.Request) {
 		if savePath == "" {
 			pdfDir := filepath.Join(h.Config.StateDir, "pdfs")
 			if err := os.MkdirAll(pdfDir, 0750); err != nil {
-				web.Error(w, 500, fmt.Errorf("create pdf dir: %w", err))
+				httpx.Error(w, 500, fmt.Errorf("create pdf dir: %w", err))
 				return
 			}
 			timestamp := time.Now().Format("20060102-150405")
 			savePath = filepath.Join(pdfDir, fmt.Sprintf("page-%s.pdf", timestamp))
 		} else {
-			safe, err := web.SafePath(h.Config.StateDir, savePath)
+			safe, err := httpx.SafeCreatePath(h.Config.StateDir, savePath)
 			if err != nil {
-				web.Error(w, 400, fmt.Errorf("invalid path: %w", err))
+				httpx.Error(w, 400, fmt.Errorf("invalid path: %w", err))
 				return
 			}
 			absBase, _ := filepath.Abs(h.Config.StateDir)
 			absPath, err := filepath.Abs(safe)
 			if err != nil || !strings.HasPrefix(absPath, absBase+string(filepath.Separator)) {
-				web.Error(w, 400, fmt.Errorf("invalid output path"))
+				httpx.Error(w, 400, fmt.Errorf("invalid output path"))
 				return
 			}
 			savePath = absPath
 			if err := os.MkdirAll(filepath.Dir(savePath), 0750); err != nil {
-				web.Error(w, 500, fmt.Errorf("create dir: %w", err))
+				httpx.Error(w, 500, fmt.Errorf("create dir: %w", err))
 				return
 			}
 		}
 
 		if err := os.WriteFile(savePath, buf, 0600); err != nil {
-			web.Error(w, 500, fmt.Errorf("write pdf: %w", err))
+			httpx.Error(w, 500, fmt.Errorf("write pdf: %w", err))
 			return
 		}
 
-		web.JSON(w, 200, map[string]any{
+		httpx.JSON(w, 200, map[string]any{
 			"path": savePath,
 			"size": len(buf),
 		})
@@ -240,10 +253,20 @@ func (h *Handlers) HandlePDF(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	web.JSON(w, 200, map[string]any{
+	httpx.JSON(w, 200, map[string]any{
 		"format": "pdf",
 		"base64": base64.StdEncoding.EncodeToString(buf),
 	})
+}
+
+func validatePDFTemplate(template string) error {
+	if template == "" {
+		return nil
+	}
+	if pdfActiveTemplatePattern.MatchString(template) {
+		return fmt.Errorf("invalid pdf template")
+	}
+	return nil
 }
 
 // HandleTabPDF generates a PDF for a tab identified by path ID.
@@ -253,7 +276,7 @@ func (h *Handlers) HandlePDF(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) HandleTabPDF(w http.ResponseWriter, r *http.Request) {
 	tabID := r.PathValue("id")
 	if tabID == "" {
-		web.Error(w, 400, fmt.Errorf("tab id required"))
+		httpx.Error(w, 400, fmt.Errorf("tab id required"))
 		return
 	}
 
@@ -262,7 +285,7 @@ func (h *Handlers) HandleTabPDF(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
 		if r.ContentLength > 0 {
 			if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodySize)).Decode(&body); err != nil {
-				web.Error(w, 400, fmt.Errorf("decode: %w", err))
+				httpx.Error(w, 400, fmt.Errorf("decode: %w", err))
 				return
 			}
 			for key, value := range body {
@@ -277,7 +300,7 @@ func (h *Handlers) HandleTabPDF(w http.ResponseWriter, r *http.Request) {
 				case float64:
 					q.Set(key, strconv.FormatFloat(v, 'f', -1, 64))
 				default:
-					web.Error(w, 400, fmt.Errorf("invalid %s type", key))
+					httpx.Error(w, 400, fmt.Errorf("invalid %s type", key))
 					return
 				}
 			}

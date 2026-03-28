@@ -15,10 +15,9 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/pinchtab/pinchtab/internal/httpx"
 	"github.com/pinchtab/pinchtab/internal/orchestrator"
-	"github.com/pinchtab/pinchtab/internal/proxy"
 	"github.com/pinchtab/pinchtab/internal/strategy"
-	"github.com/pinchtab/pinchtab/internal/web"
 )
 
 func init() {
@@ -51,12 +50,20 @@ func (s *Strategy) RegisterRoutes(mux *http.ServeMux) {
 	// Shorthand endpoints — all proxy to first running instance.
 	shorthandRoutes := []string{
 		"GET /snapshot", "GET /screenshot", "GET /text", "GET /pdf", "POST /pdf",
+		"GET /console", "POST /console/clear",
+		"GET /errors", "POST /errors/clear",
+		"GET /clipboard/read", "POST /clipboard/write", "POST /clipboard/copy", "GET /clipboard/paste",
+		"GET /network", "GET /network/stream", "GET /network/export", "GET /network/export/stream", "GET /network/{requestId}", "POST /network/clear",
 		"POST /navigate", "POST /back", "POST /forward", "POST /reload",
 		"POST /action", "POST /actions",
+		"POST /dialog",
+		"POST /wait",
 		"POST /tab", "POST /tab/lock", "POST /tab/unlock",
 		"GET /cookies", "POST /cookies",
 		"GET /stealth/status", "POST /fingerprint/rotate",
 		"POST /find",
+		"GET /solvers",
+		"POST /solve", "POST /solve/{name}",
 	}
 	for _, route := range shorthandRoutes {
 		mux.HandleFunc(route, s.proxyToFirst)
@@ -75,20 +82,20 @@ func (s *Strategy) RegisterRoutes(mux *http.ServeMux) {
 func (s *Strategy) proxyToFirst(w http.ResponseWriter, r *http.Request) {
 	target, err := s.ensureRunning()
 	if err != nil {
-		web.Error(w, 503, err)
+		httpx.Error(w, 503, err)
 		return
 	}
 	strategy.EnrichForTarget(r, s.orch, target)
-	proxy.HTTP(w, r, target+r.URL.Path)
+	s.orch.ProxyToTarget(w, r, target+r.URL.Path)
 }
 
 func (s *Strategy) handleTabs(w http.ResponseWriter, r *http.Request) {
 	target := s.orch.FirstRunningURL()
 	if target == "" {
-		web.JSON(w, 200, map[string]any{"tabs": []any{}})
+		httpx.JSON(w, 200, map[string]any{"tabs": []any{}})
 		return
 	}
-	proxy.HTTP(w, r, target+"/tabs")
+	s.orch.ProxyToTarget(w, r, target+"/tabs")
 }
 
 // ensureRunning returns the URL of a running instance, auto-launching one if needed.

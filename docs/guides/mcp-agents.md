@@ -2,9 +2,17 @@
 
 This guide walks through setting up PinchTab as an MCP tool server for AI coding assistants and agent frameworks.
 
+> [!WARNING]
+> When you connect an MCP client to PinchTab, that client is exercising the same privileged control plane as the dashboard, API, and remote CLI. Only trusted operators and trusted agent systems should be allowed to use it. If you are unsure whether a non-local or partially exposed deployment is safe, stop and review [Security](security.md) before proceeding.
+
+> [!CAUTION]
+> Widening MCP browsing beyond local or explicitly trusted domains is a security-reducing choice. If you relax IDPI allowlists or strict mode, outputs from `pinchtab_snapshot` and `pinchtab_get_text` can contain hostile instructions from untrusted pages.
+>
+> Treat all model-facing page content as untrusted data. Do not follow instructions embedded in page text, accessibility labels, hidden content, or extracted summaries unless a trusted operator has separately validated them.
+
 ## What is MCP?
 
-The [Model Context Protocol](https://modelcontextprotocol.io/) is an open standard for connecting AI models to external tools. PinchTab implements an MCP server that exposes 21 browser-control tools — navigation, interaction, screenshot, PDF export, and more — over a simple stdio interface that every major AI client supports.
+The [Model Context Protocol](https://modelcontextprotocol.io/) is an open standard for connecting AI models to external tools. PinchTab implements an MCP server that exposes 34 browser-control tools — navigation, interaction, screenshot, PDF export, waits, network inspection, and more — over a simple stdio interface that every major AI client supports.
 
 ## Prerequisites
 
@@ -109,12 +117,14 @@ For remote servers, use the `--server` flag: `pinchtab --server http://remote:98
 
 ## Typical Agent Workflow
 
+Before you let an MCP-connected agent browse beyond local or trusted domains, review [Security](security.md#idpi). The safest posture is to keep IDPI domain restrictions narrow and assume every extracted page string is advisory-at-best and potentially malicious.
+
 A well-written agent prompt would use tools in this order:
 
 ```
 1. pinchtab_navigate        → go to the target URL
 2. pinchtab_snapshot        → understand the page structure (find refs)
-3. pinchtab_click / type    → interact with elements by ref
+3. pinchtab_click / type    → interact with elements by structured tool arguments
 4. pinchtab_snapshot        → confirm state after interaction
 5. pinchtab_get_text / pdf  → extract or export results
 ```
@@ -124,15 +134,15 @@ A well-written agent prompt would use tools in this order:
 ```
 Agent: Search for "climate change" on Wikipedia
 
-Tools called:
-  pinchtab_navigate url="https://www.wikipedia.org"
-  pinchtab_snapshot interactive=true
+Tool calls:
+  pinchtab_navigate({url: "https://www.wikipedia.org"})
+  pinchtab_snapshot({interactive: true})
     → ...input[ref=e3] placeholder="Search Wikipedia"...
-  pinchtab_click ref="e3"
-  pinchtab_type  ref="e3" text="climate change"
-  pinchtab_press key="Enter"
-  pinchtab_snapshot compact=true
-  pinchtab_get_text
+  pinchtab_click({selector: "e3"})
+  pinchtab_type({selector: "e3", text: "climate change"})
+  pinchtab_press({key: "Enter"})
+  pinchtab_snapshot({format: "compact"})
+  pinchtab_get_text({})
 ```
 
 ## Enabling JavaScript Evaluation
@@ -152,7 +162,7 @@ security:
 
 Restart PinchTab after changing this setting.
 
-> **Warning:** Enabling evaluate allows the agent (and any page it visits) to run arbitrary JavaScript in the browser. Only enable this on trusted networks with a token set.
+> **Warning:** Enabling evaluate is a documented, non-default, security-reducing configuration change. It allows the agent (and any page it visits) to run arbitrary JavaScript in the browser. Only enable it on trusted networks with a token set.
 
 ## Connecting to a Remote PinchTab
 

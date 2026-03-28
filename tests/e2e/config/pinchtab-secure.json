@@ -1,10 +1,8 @@
 {
   "server": {
     "bind": "0.0.0.0",
-    "port": "9999"
-  },
-  "browser": {
-    "extraFlags": "--no-sandbox --disable-dev-shm-usage"
+    "port": "9999",
+    "token": "e2e-token"
   },
   "instanceDefaults": {
     "maxTabs": 2,
@@ -31,7 +29,8 @@
       "allowedDomains": [
         "internal-test.invalid",
         "fixtures"
-      ]
+      ],
+      "shieldThreshold": 30
     }
   }
 }

@@ -12,14 +12,24 @@ type RuntimeConfig struct {
 	InstancePortEnd   int // Ending port for instances (default 9968)
 	Token             string
 	StateDir          string
+	TrustProxyHeaders bool  // Only trust X-Forwarded-*/Forwarded headers when behind a trusted reverse proxy
+	CookieSecure      *bool // Nil = auto-detect based on request scheme/host for backward compatibility
 
 	// Security settings
-	AllowEvaluate   bool
-	AllowMacro      bool
-	AllowScreencast bool
-	AllowDownload   bool
-	AllowUpload     bool
-	MaxRedirects    int // Max HTTP redirects (-1=unlimited, 0=none, default=-1)
+	AllowEvaluate          bool
+	AllowMacro             bool
+	AllowScreencast        bool
+	AllowDownload          bool
+	DownloadAllowedDomains []string
+	DownloadMaxBytes       int
+	AllowUpload            bool
+	AllowClipboard         bool
+	UploadMaxRequestBytes  int
+	UploadMaxFiles         int
+	UploadMaxFileBytes     int
+	UploadMaxTotalBytes    int
+	MaxRedirects           int      // Max HTTP redirects (-1=unlimited, 0=none, default=-1)
+	TrustedProxyCIDRs      []string // CIDRs/IPs whose RemoteIPAddress is trusted in navigation responses (e.g. internal proxy)
 
 	// Browser/instance settings
 	Headless          bool
@@ -35,6 +45,7 @@ type RuntimeConfig struct {
 	MaxTabs           int
 	MaxParallelTabs   int // 0 = auto-detect from runtime.NumCPU
 	ChromeBinary      string
+	ChromeDebugPort   int
 	ChromeExtraFlags  string
 	ExtensionPaths    []string
 	UserAgent         string
@@ -90,6 +101,10 @@ type IDPIConfig struct {
 	WrapContent    bool     `json:"wrapContent,omitempty"`
 	CustomPatterns []string `json:"customPatterns,omitempty"`
 	ScanTimeoutSec int      `json:"scanTimeoutSec,omitempty"`
+	// ShieldThreshold sets the minimum score (0-100) from idpishield
+	// to flag content as a threat. Lower = more sensitive.
+	// When zero, idpishield defaults apply (40 strict, 60 normal).
+	ShieldThreshold int `json:"shieldThreshold,omitempty"`
 }
 
 // SchedulerConfig holds task scheduler settings.
@@ -135,11 +150,14 @@ type ServerConfig struct {
 	StateDir          string `json:"stateDir,omitempty"`
 	Engine            string `json:"engine,omitempty"`
 	NetworkBufferSize *int   `json:"networkBufferSize,omitempty"`
+	TrustProxyHeaders *bool  `json:"trustProxyHeaders,omitempty"`
+	CookieSecure      *bool  `json:"cookieSecure,omitempty"`
 }
 
 type BrowserConfig struct {
 	ChromeVersion    string   `json:"version,omitempty"`
 	ChromeBinary     string   `json:"binary,omitempty"`
+	ChromeDebugPort  *int     `json:"remoteDebuggingPort,omitempty"`
 	ChromeExtraFlags string   `json:"extraFlags,omitempty"`
 	ExtensionPaths   []string `json:"extensionPaths,omitempty"`
 }
@@ -166,14 +184,22 @@ type ProfilesConfig struct {
 }
 
 type SecurityConfig struct {
-	AllowEvaluate   *bool        `json:"allowEvaluate,omitempty"`
-	AllowMacro      *bool        `json:"allowMacro,omitempty"`
-	AllowScreencast *bool        `json:"allowScreencast,omitempty"`
-	AllowDownload   *bool        `json:"allowDownload,omitempty"`
-	AllowUpload     *bool        `json:"allowUpload,omitempty"`
-	MaxRedirects    *int         `json:"maxRedirects,omitempty"`
-	Attach          AttachConfig `json:"attach,omitempty"`
-	IDPI            IDPIConfig   `json:"idpi,omitempty"`
+	AllowEvaluate          *bool        `json:"allowEvaluate,omitempty"`
+	AllowMacro             *bool        `json:"allowMacro,omitempty"`
+	AllowScreencast        *bool        `json:"allowScreencast,omitempty"`
+	AllowDownload          *bool        `json:"allowDownload,omitempty"`
+	DownloadAllowedDomains []string     `json:"downloadAllowedDomains,omitempty"`
+	DownloadMaxBytes       *int         `json:"downloadMaxBytes,omitempty"`
+	AllowUpload            *bool        `json:"allowUpload,omitempty"`
+	AllowClipboard         *bool        `json:"allowClipboard,omitempty"`
+	UploadMaxRequestBytes  *int         `json:"uploadMaxRequestBytes,omitempty"`
+	UploadMaxFiles         *int         `json:"uploadMaxFiles,omitempty"`
+	UploadMaxFileBytes     *int         `json:"uploadMaxFileBytes,omitempty"`
+	UploadMaxTotalBytes    *int         `json:"uploadMaxTotalBytes,omitempty"`
+	MaxRedirects           *int         `json:"maxRedirects,omitempty"`
+	TrustedProxyCIDRs      []string     `json:"trustedProxyCIDRs,omitempty"`
+	Attach                 AttachConfig `json:"attach,omitempty"`
+	IDPI                   IDPIConfig   `json:"idpi,omitempty"`
 }
 
 type MultiInstanceConfig struct {

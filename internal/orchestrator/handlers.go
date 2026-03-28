@@ -3,7 +3,7 @@ package orchestrator
 import (
 	"net/http"
 
-	"github.com/pinchtab/pinchtab/internal/web"
+	"github.com/pinchtab/pinchtab/internal/httpx"
 )
 
 func registerCapabilityRoute(mux *http.ServeMux, route string, enabled bool, feature, setting, code string, next http.HandlerFunc) {
@@ -11,12 +11,24 @@ func registerCapabilityRoute(mux *http.ServeMux, route string, enabled bool, fea
 		mux.HandleFunc(route, next)
 		return
 	}
-	mux.HandleFunc(route, web.DisabledEndpointHandler(feature, setting, code))
+	mux.HandleFunc(route, httpx.DisabledEndpointHandler(feature, setting, code))
+}
+
+// RegisterHandlersNoLaunch registers all orchestrator handlers except
+// local instance launch endpoints (start, launch). Used by the no-instance strategy.
+func (o *Orchestrator) RegisterHandlersNoLaunch(mux *http.ServeMux) {
+	o.registerHandlers(mux, true)
 }
 
 func (o *Orchestrator) RegisterHandlers(mux *http.ServeMux) {
+	o.registerHandlers(mux, false)
+}
+
+func (o *Orchestrator) registerHandlers(mux *http.ServeMux, skipLaunch bool) {
 	// Profile management
-	mux.HandleFunc("POST /profiles/{id}/start", o.handleStartByID)
+	if !skipLaunch {
+		mux.HandleFunc("POST /profiles/{id}/start", o.handleStartByID)
+	}
 	mux.HandleFunc("POST /profiles/{id}/stop", o.handleStopByID)
 	mux.HandleFunc("GET /profiles/{id}/instance", o.handleProfileInstance)
 
@@ -25,11 +37,15 @@ func (o *Orchestrator) RegisterHandlers(mux *http.ServeMux) {
 	mux.HandleFunc("GET /instances/{id}", o.handleGetInstance)
 	mux.HandleFunc("GET /instances/tabs", o.handleAllTabs)
 	mux.HandleFunc("GET /instances/metrics", o.handleAllMetrics)
-	mux.HandleFunc("POST /instances/start", o.handleStartInstance)
-	mux.HandleFunc("POST /instances/launch", o.handleLaunchByName)
+	if !skipLaunch {
+		mux.HandleFunc("POST /instances/start", o.handleStartInstance)
+		mux.HandleFunc("POST /instances/launch", o.handleLaunchByName)
+	}
 	mux.HandleFunc("POST /instances/attach", o.handleAttachInstance)
 	mux.HandleFunc("POST /instances/attach-bridge", o.handleAttachBridge)
-	mux.HandleFunc("POST /instances/{id}/start", o.handleStartByInstanceID)
+	if !skipLaunch {
+		mux.HandleFunc("POST /instances/{id}/start", o.handleStartByInstanceID)
+	}
 	mux.HandleFunc("POST /instances/{id}/stop", o.handleStopByInstanceID)
 	mux.HandleFunc("GET /instances/{id}/logs", o.handleLogsByID)
 	mux.HandleFunc("GET /instances/{id}/logs/stream", o.handleLogsStreamByID)
@@ -61,6 +77,11 @@ func (o *Orchestrator) RegisterHandlers(mux *http.ServeMux) {
 		"POST /tabs/{id}/back",
 		"POST /tabs/{id}/forward",
 		"POST /tabs/{id}/reload",
+		"POST /tabs/{id}/wait",
+		"POST /tabs/{id}/solve",
+		"POST /tabs/{id}/solve/{name}",
+		"GET /tabs/{id}/network/export",
+		"GET /tabs/{id}/network/export/stream",
 	} {
 		mux.HandleFunc(route, o.proxyTabRequest)
 	}
@@ -70,13 +91,13 @@ func (o *Orchestrator) RegisterHandlers(mux *http.ServeMux) {
 }
 
 func (o *Orchestrator) handleList(w http.ResponseWriter, r *http.Request) {
-	web.JSON(w, 200, o.List())
+	httpx.JSON(w, 200, o.List())
 }
 
 func (o *Orchestrator) handleAllTabs(w http.ResponseWriter, r *http.Request) {
-	web.JSON(w, 200, o.AllTabs())
+	httpx.JSON(w, 200, o.AllTabs())
 }
 
 func (o *Orchestrator) handleAllMetrics(w http.ResponseWriter, r *http.Request) {
-	web.JSON(w, 200, o.AllMetrics())
+	httpx.JSON(w, 200, o.AllMetrics())
 }

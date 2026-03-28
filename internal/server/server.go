@@ -12,21 +12,23 @@ import (
 	"time"
 
 	"github.com/pinchtab/pinchtab/internal/activity"
+	"github.com/pinchtab/pinchtab/internal/authn"
 	"github.com/pinchtab/pinchtab/internal/bridge"
 	"github.com/pinchtab/pinchtab/internal/cli"
 	"github.com/pinchtab/pinchtab/internal/config"
 	"github.com/pinchtab/pinchtab/internal/dashboard"
 	"github.com/pinchtab/pinchtab/internal/handlers"
+	"github.com/pinchtab/pinchtab/internal/httpx"
 	"github.com/pinchtab/pinchtab/internal/orchestrator"
 	"github.com/pinchtab/pinchtab/internal/profiles"
 	"github.com/pinchtab/pinchtab/internal/scheduler"
 	"github.com/pinchtab/pinchtab/internal/strategy"
-	"github.com/pinchtab/pinchtab/internal/web"
 
 	// Register strategies
 	_ "github.com/pinchtab/pinchtab/internal/strategy/alwayson"
 	_ "github.com/pinchtab/pinchtab/internal/strategy/autorestart"
 	_ "github.com/pinchtab/pinchtab/internal/strategy/explicit"
+	_ "github.com/pinchtab/pinchtab/internal/strategy/noinstance"
 	_ "github.com/pinchtab/pinchtab/internal/strategy/simple"
 )
 
@@ -61,7 +63,12 @@ func RunDashboard(cfg *config.RuntimeConfig, version string) {
 			RateBucketHosts: MetricInt(snapshot["rateBucketHosts"]),
 		}
 	})
-	configAPI := dashboard.NewConfigAPI(cfg, orch, profMgr, orch, version, startedAt)
+	configAPI := dashboard.NewConfigAPI(cfg, orch, profMgr, orch, dash, version, startedAt)
+	sessions := authn.NewSessionManager(authn.SessionConfig{
+		IdleTimeout: authn.DefaultSessionIdleTimeout,
+		MaxLifetime: authn.DefaultSessionMaxLifetime,
+	})
+	authAPI := dashboard.NewAuthAPI(cfg, sessions)
 
 	// Wire up instance events to SSE broadcast
 	orch.OnEvent(func(evt orchestrator.InstanceEvent) {
@@ -84,8 +91,10 @@ func RunDashboard(cfg *config.RuntimeConfig, version string) {
 
 	dash.RegisterHandlers(mux)
 	configAPI.RegisterHandlers(mux)
+	authAPI.RegisterHandlers(mux)
 	profMgr.RegisterHandlers(mux)
-	activity.RegisterHandlers(mux, actStore)
+	liveActivity := newDashboardActivityRecorder(actStore, dash)
+	activity.RegisterHandlers(mux, liveActivity)
 
 	strategyName := cfg.Strategy
 	if strategyName == "" {
@@ -172,14 +181,16 @@ func RunDashboard(cfg *config.RuntimeConfig, version string) {
 
 	mux.HandleFunc("GET /health", configAPI.HandleHealth)
 	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
-		web.JSON(w, 200, map[string]any{"metrics": handlers.SnapshotMetrics()})
+		httpx.JSON(w, 200, map[string]any{"metrics": handlers.SnapshotMetrics()})
 	})
 
 	handler := handlers.RequestIDMiddleware(
 		activity.Middleware(
-			actStore,
+			liveActivity,
 			"server",
-			handlers.LoggingMiddleware(handlers.CorsMiddleware(handlers.AuthMiddleware(cfg, mux))),
+			handlers.SecurityHeadersMiddleware(cfg,
+				handlers.LoggingMiddleware(handlers.RateLimitMiddleware(handlers.CorsMiddleware(cfg, handlers.AuthMiddlewareWithSessions(cfg, sessions, mux)))),
+			),
 		),
 	)
 	cli.LogSecurityWarnings(cfg)
@@ -187,6 +198,7 @@ func RunDashboard(cfg *config.RuntimeConfig, version string) {
 	srv := &http.Server{
 		Addr:              cfg.Bind + ":" + dashPort,
 		Handler:           handler,
+		MaxHeaderBytes:    maxHeaderBytes,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      60 * time.Second,
@@ -222,7 +234,8 @@ func RunDashboard(cfg *config.RuntimeConfig, version string) {
 	}
 
 	mux.HandleFunc("POST /shutdown", func(w http.ResponseWriter, r *http.Request) {
-		web.JSON(w, 200, map[string]string{"status": "shutting down"})
+		authn.AuditLog(r, "system.shutdown_requested")
+		httpx.JSON(w, 200, map[string]string{"status": "shutting down"})
 		go doShutdown()
 	})
 

@@ -6,6 +6,8 @@ Use this guide when:
 - a PinchTab bridge server runs on another machine
 - you want agents to keep talking to the orchestrator while the browser work happens remotely
 
+This is an advanced deployment pattern. Use it only when you understand the security model, keep the bridge on a private or otherwise closed network, and avoid exposing the bridge or orchestrator broadly beyond the systems that need to reach them. High-risk endpoint families should remain disabled unless they are explicitly required, and if enabled they should be reachable only by the minimum trusted systems involved in the deployment.
+
 This is now a supported orchestration mode through:
 
 ```text
@@ -100,6 +102,9 @@ Important notes:
 - `allowHosts` must include the remote bridge host
 - `allowSchemes` must include `http` or `https` for bridge attachment
 - `ws` and `wss` are still used for CDP attachment
+- `baseUrl` must be a bare bridge origin; do not include credentials, query strings, fragments, or a path
+
+If you use `allowHosts: ["*"]`, the orchestrator will accept any reachable bridge host with an allowed scheme. That is a documented, non-default, security-reducing override: it removes host allowlisting entirely and should only be used on isolated, operator-controlled networks.
 
 If you leave `allowSchemes` as only `ws,wss`, `attach-bridge` will be rejected.
 
@@ -118,6 +123,8 @@ pinchtab config set server.token bridge-secret-token
 # Start the bridge
 pinchtab bridge
 ```
+
+This non-loopback bind is a documented, non-default, security-reducing deployment change. It is appropriate here only because the bridge must be reachable from the orchestrator. Keep the bridge token set and expose the port only on a controlled network boundary.
 
 Example bridge origin:
 
@@ -295,6 +302,22 @@ The supported model is:
 
 ---
 
+## Hub-Only Mode
+
+If you only want remote bridges and never want local Chrome, use the `no-instance` strategy:
+
+```json
+{
+  "multiInstance": {
+    "strategy": "no-instance"
+  }
+}
+```
+
+This blocks all local launch endpoints and starts the server as a pure hub. Remote bridges attach via `POST /instances/attach-bridge` and shorthand routes proxy to the first connected bridge.
+
+---
+
 ## Summary
 
 Use `POST /instances/attach-bridge` when you want:
@@ -303,5 +326,7 @@ Use `POST /instances/attach-bridge` when you want:
 - bridge on machine B
 - agents still talking only to machine A
 - remote browser work without remote process-management complexity
+
+Use `no-instance` strategy when you want a dedicated hub that never launches local Chrome.
 
 This is the right feature when you want distributed execution with a single control plane.

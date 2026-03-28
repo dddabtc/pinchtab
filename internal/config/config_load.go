@@ -19,14 +19,21 @@ func Load() *RuntimeConfig {
 		InstancePortEnd:   9968,
 		Token:             os.Getenv("PINCHTAB_TOKEN"),
 		StateDir:          userConfigDir(),
+		CookieSecure:      nil,
 
 		// Security defaults
-		AllowEvaluate:   false,
-		AllowMacro:      false,
-		AllowScreencast: false,
-		AllowDownload:   false,
-		AllowUpload:     false,
-		MaxRedirects:    -1, // Unlimited by default; set to N to limit redirect hops
+		AllowEvaluate:          false,
+		AllowMacro:             false,
+		AllowScreencast:        false,
+		AllowDownload:          false,
+		DownloadAllowedDomains: nil,
+		DownloadMaxBytes:       DefaultDownloadMaxBytes,
+		AllowUpload:            false,
+		UploadMaxRequestBytes:  DefaultUploadMaxRequestBytes,
+		UploadMaxFiles:         DefaultUploadMaxFiles,
+		UploadMaxFileBytes:     DefaultUploadMaxFileBytes,
+		UploadMaxTotalBytes:    DefaultUploadMaxTotalBytes,
+		MaxRedirects:           -1, // Unlimited by default; set to N to limit redirect hops
 
 		// Browser / instance defaults
 		Headless:          true,
@@ -64,7 +71,7 @@ func Load() *RuntimeConfig {
 		RestartStableAfter: 5 * time.Minute,
 
 		// Attach defaults
-		AttachEnabled:      true,
+		AttachEnabled:      false,
 		AttachAllowHosts:   []string{"127.0.0.1", "localhost", "::1"},
 		AttachAllowSchemes: []string{"ws", "wss"},
 
@@ -176,7 +183,7 @@ func applyFileConfig(cfg *RuntimeConfig, fc *FileConfig) {
 	if fc.Server.Bind != "" {
 		cfg.Bind = fc.Server.Bind
 	}
-	if fc.Server.Token != "" && os.Getenv("PINCHTAB_TOKEN") == "" {
+	if os.Getenv("PINCHTAB_TOKEN") == "" {
 		cfg.Token = fc.Server.Token
 	}
 	if fc.Server.StateDir != "" {
@@ -188,6 +195,10 @@ func applyFileConfig(cfg *RuntimeConfig, fc *FileConfig) {
 	if fc.Server.NetworkBufferSize != nil && *fc.Server.NetworkBufferSize > 0 {
 		cfg.NetworkBufferSize = ClampNetworkBufferSize(*fc.Server.NetworkBufferSize)
 	}
+	if fc.Server.TrustProxyHeaders != nil {
+		cfg.TrustProxyHeaders = *fc.Server.TrustProxyHeaders
+	}
+	cfg.CookieSecure = fc.Server.CookieSecure
 	// Security
 	if fc.Security.AllowEvaluate != nil {
 		cfg.AllowEvaluate = *fc.Security.AllowEvaluate
@@ -201,12 +212,37 @@ func applyFileConfig(cfg *RuntimeConfig, fc *FileConfig) {
 	if fc.Security.AllowDownload != nil {
 		cfg.AllowDownload = *fc.Security.AllowDownload
 	}
+	cfg.DownloadAllowedDomains = append([]string(nil), fc.Security.DownloadAllowedDomains...)
+	if fc.Security.DownloadMaxBytes != nil {
+		cfg.DownloadMaxBytes = clampPositiveLimit(*fc.Security.DownloadMaxBytes, DefaultDownloadMaxBytes, MaxDownloadMaxBytes)
+	}
 	if fc.Security.AllowUpload != nil {
 		cfg.AllowUpload = *fc.Security.AllowUpload
+	}
+	if fc.Security.AllowClipboard != nil {
+		cfg.AllowClipboard = *fc.Security.AllowClipboard
+	}
+	if fc.Security.UploadMaxRequestBytes != nil {
+		cfg.UploadMaxRequestBytes = clampPositiveLimit(*fc.Security.UploadMaxRequestBytes, DefaultUploadMaxRequestBytes, MaxUploadMaxRequestBytes)
+	}
+	if fc.Security.UploadMaxFiles != nil {
+		cfg.UploadMaxFiles = clampPositiveLimit(*fc.Security.UploadMaxFiles, DefaultUploadMaxFiles, MaxUploadMaxFiles)
+	}
+	if fc.Security.UploadMaxFileBytes != nil {
+		cfg.UploadMaxFileBytes = clampPositiveLimit(*fc.Security.UploadMaxFileBytes, DefaultUploadMaxFileBytes, MaxUploadMaxFileBytes)
+	}
+	if fc.Security.UploadMaxTotalBytes != nil {
+		cfg.UploadMaxTotalBytes = clampPositiveLimit(*fc.Security.UploadMaxTotalBytes, DefaultUploadMaxTotalBytes, MaxUploadMaxTotalBytes)
 	}
 	if fc.Security.MaxRedirects != nil {
 		cfg.MaxRedirects = *fc.Security.MaxRedirects
 	}
+	if fc.Security.Attach.Enabled != nil {
+		cfg.AttachEnabled = *fc.Security.Attach.Enabled
+	}
+	cfg.AttachAllowHosts = append([]string(nil), fc.Security.Attach.AllowHosts...)
+	cfg.AttachAllowSchemes = append([]string(nil), fc.Security.Attach.AllowSchemes...)
+	cfg.TrustedProxyCIDRs = append([]string(nil), fc.Security.TrustedProxyCIDRs...)
 	// IDPI – copy the whole struct; individual fields have safe zero-value defaults.
 	cfg.IDPI = fc.Security.IDPI
 	if fc.Observability.Activity.Enabled != nil {
@@ -226,8 +262,11 @@ func applyFileConfig(cfg *RuntimeConfig, fc *FileConfig) {
 	if fc.Browser.ChromeBinary != "" {
 		cfg.ChromeBinary = fc.Browser.ChromeBinary
 	}
+	if fc.Browser.ChromeDebugPort != nil && *fc.Browser.ChromeDebugPort > 0 {
+		cfg.ChromeDebugPort = *fc.Browser.ChromeDebugPort
+	}
 	if fc.Browser.ChromeExtraFlags != "" {
-		cfg.ChromeExtraFlags = fc.Browser.ChromeExtraFlags
+		cfg.ChromeExtraFlags = SanitizeChromeExtraFlags(fc.Browser.ChromeExtraFlags)
 	}
 	if len(fc.Browser.ExtensionPaths) > 0 {
 		cfg.ExtensionPaths = fc.Browser.ExtensionPaths

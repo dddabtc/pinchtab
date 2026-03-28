@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/pinchtab/pinchtab/internal/activity"
-	"github.com/pinchtab/pinchtab/internal/assets"
 	"github.com/pinchtab/pinchtab/internal/bridge"
 	"github.com/pinchtab/pinchtab/internal/cli"
 	"github.com/pinchtab/pinchtab/internal/config"
@@ -19,7 +18,7 @@ import (
 	"github.com/pinchtab/pinchtab/internal/handlers"
 )
 
-func RunBridgeServer(cfg *config.RuntimeConfig) {
+func RunBridgeServer(cfg *config.RuntimeConfig, version string) {
 	listenAddr := cfg.ListenAddr()
 	cli.PrintStartupBanner(cfg, cli.StartupBannerOptions{
 		Mode:         "bridge",
@@ -32,7 +31,6 @@ func RunBridgeServer(cfg *config.RuntimeConfig) {
 	bridge.CleanupOrphanedChromeProcesses(cfg.ProfileDir)
 
 	bridgeInstance := bridge.New(context.Background(), nil, cfg)
-	bridgeInstance.StealthScript = assets.StealthScript
 	actStore, err := activity.NewRecorder(activity.Config{
 		Enabled:       cfg.Observability.Activity.Enabled,
 		SessionIdle:   time.Duration(cfg.Observability.Activity.SessionIdleSec) * time.Second,
@@ -45,6 +43,7 @@ func RunBridgeServer(cfg *config.RuntimeConfig) {
 
 	mux := http.NewServeMux()
 	h := handlers.New(bridgeInstance, cfg, nil, nil, nil)
+	h.Version = version
 	configureBridgeRouter(h, cfg)
 
 	shutdownOnce := &sync.Once{}
@@ -66,9 +65,12 @@ func RunBridgeServer(cfg *config.RuntimeConfig) {
 			activity.Middleware(
 				actStore,
 				"bridge",
-				handlers.LoggingMiddleware(handlers.AuthMiddleware(cfg, mux)),
+				handlers.SecurityHeadersMiddleware(cfg,
+					handlers.LoggingMiddleware(handlers.RateLimitMiddleware(handlers.AuthMiddleware(cfg, mux))),
+				),
 			),
 		),
+		MaxHeaderBytes:    maxHeaderBytes,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      60 * time.Second,

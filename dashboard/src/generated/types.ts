@@ -59,14 +59,25 @@ export interface Agent {
   requestCount: number /* int */;
 }
 /**
+ * AgentDetail returns agent-centric dashboard data for a single agent.
+ */
+export interface AgentDetail {
+  agent: Agent;
+  events: ActivityEvent[];
+}
+/**
  * ActivityEvent represents an action in the activity feed.
  */
 export interface ActivityEvent {
   id: string;
   agentId: string;
+  channel: string; // "tool_call" or "progress"
   type: string; // navigate/snapshot/action/screenshot/other
   method: string;
   path: string;
+  message?: string; // human-readable (progress channel)
+  progress?: number /* int */; // 0-100 numeric progress
+  total?: number /* int */; // total steps
   timestamp: string;
   details?: { [key: string]: any };
 }
@@ -122,9 +133,16 @@ export interface BrowserSettings {
  */
 export interface Settings {
   screencast: ScreencastSettings;
-  stealth: string; // light/full
+  stealth: string; // light/medium/full
   browser: BrowserSettings;
   monitoring: MonitoringSettings;
+  agents: AgentSettings;
+}
+/**
+ * AgentSettings controls agent reasoning output visibility.
+ */
+export interface AgentSettings {
+  reasoningMode: string; // "tool_calls" (default), "progress", "both"
 }
 /**
  * MonitoringSettings controls dashboard monitoring features.

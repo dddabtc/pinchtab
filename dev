@@ -19,20 +19,19 @@ NC=$'\033[0m'
 COMMANDS=(
   "build:🔨:Build the application"
   "dev:🚀:Build & run"
+  "dashboard:🔥:Hot-reload dashboard development"
   "run:🏃:Run the application"
   "check:🧪:All checks"
   "test unit:🔬:Go unit tests"
   "test dashboard:🔬:Dashboard unit tests"
-  "e2e:🐳:E2E release suites"
+  "e2e:🐳:E2E suites"
+  "  pr:🐳:PR suite (api-fast + cli-fast)"
+  "  release:🐳:Release suite (api-full + cli-full)"
   "  docker:🐳:Build local image and run Docker smoke test"
-  "  pr:🐳:E2E PR suite"
-  "  recent:🐳:E2E Recent tests"
-  "  api-fast:🐳:E2E API fast tests"
-  "  cli-fast:🐳:E2E CLI fast tests"
-  "  full-api:🐳:E2E full API tests"
-  "  full-cli:🐳:E2E full CLI tests"
-  "  full-extended:🐳:E2E full extended tests"
-  "  release:🐳:E2E release meta-suite"
+  "  api-fast:🐳:API fast (single-instance)"
+  "  cli-fast:🐳:CLI fast (single-instance)"
+  "  api-full:🐳:API full (multi-instance)"
+  "  cli-full:🐳:CLI full (single-instance)"
   "doctor:🩺:Setup dev environment"
   "check go:🧪:Go only"
   "check dashboard:🧪:Dashboard only"
@@ -154,12 +153,21 @@ run_command() {
       ;;
     "e2e"*)
       local suite="release"
+      local filter=""
       if [ "$target" != "e2e" ]; then
-        suite="${target#e2e }"
+        local e2e_args="${target#e2e }"
+        suite="${e2e_args%% *}"
+        if [ "$suite" != "$e2e_args" ]; then
+          filter="${e2e_args#"$suite "}"
+        fi
+      fi
+      if [ -n "$filter" ]; then
+        exec bash scripts/e2e.sh "$suite" "$filter"
       fi
       exec bash scripts/e2e.sh "$suite"
       ;;
     "dev")          exec bash scripts/dev.sh ;;
+    "dashboard")    exec bash scripts/dev-dashboard.sh ;;
     "build")        exec bash scripts/build.sh ;;
     "binary")       exec bash scripts/binary.sh ;;
     "binary all"|"all") exec bash scripts/binary.sh all ;;
@@ -255,6 +263,7 @@ if [ $# -gt 0 ]; then
       if command -v gum &>/dev/null; then pick_with_gum; else pick_with_select; fi
       exit 0
       ;;
+
     check)
       if [ $# -gt 1 ]; then
         run_command "check $2"

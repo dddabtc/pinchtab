@@ -139,7 +139,7 @@ func TestIsTransientURL(t *testing.T) {
 		"http://localhost:3000/dashboard",
 	}
 	for _, u := range transient {
-		if !isTransientURL(u) {
+		if !IsTransientURL(u) {
 			t.Errorf("expected transient: %s", u)
 		}
 	}
@@ -151,9 +151,30 @@ func TestIsTransientURL(t *testing.T) {
 		"https://httpbin.org/get",
 	}
 	for _, u := range persistent {
-		if isTransientURL(u) {
+		if IsTransientURL(u) {
 			t.Errorf("expected persistent: %s", u)
 		}
+	}
+}
+
+func TestSafeURLHostForLog(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "https query", raw: "https://example.com/reset?token=secret", want: "example.com"},
+		{name: "subdomain with port", raw: "https://app.example.com:8443/path?q=1", want: "app.example.com"},
+		{name: "malformed", raw: "://bad-url", want: ""},
+		{name: "empty", raw: "", want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := safeURLHostForLog(tt.raw); got != tt.want {
+				t.Fatalf("safeURLHostForLog(%q) = %q, want %q", tt.raw, got, tt.want)
+			}
+		})
 	}
 }
 

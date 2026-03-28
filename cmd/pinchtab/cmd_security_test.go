@@ -42,6 +42,45 @@ func TestHandleSecurityCommandDefaultConfigSkipsEmptySections(t *testing.T) {
 	}
 }
 
+func TestApplySecurityDownPrintsExplicitRiskFraming(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "pinchtab", "config.json")
+	t.Setenv("PINCHTAB_CONFIG", configPath)
+
+	fc := config.DefaultFileConfig()
+	fc.Server.Token = "guarded-token"
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := config.SaveFileConfig(&fc, configPath); err != nil {
+		t.Fatalf("SaveFileConfig() error = %v", err)
+	}
+
+	output := captureStdout(t, func() {
+		cfg, changed, err := applySecurityDown()
+		if err != nil {
+			t.Fatalf("applySecurityDown() error = %v", err)
+		}
+		if !changed {
+			t.Fatal("expected applySecurityDown() to change config")
+		}
+		if cfg == nil {
+			t.Fatal("expected runtime config result")
+		}
+	})
+
+	for _, needle := range []string{
+		"Guards down preset applied",
+		"This is a documented, non-default, security-reducing preset.",
+		"sensitive endpoints and attach are enabled, and IDPI protections are disabled.",
+		"Attach host allowlisting remains local-only.",
+		"Changing server.bind away from 127.0.0.1 later is also an additional explicit weakening",
+	} {
+		if !strings.Contains(output, needle) {
+			t.Fatalf("expected output to contain %q\n%s", needle, output)
+		}
+	}
+}
+
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
 
@@ -68,53 +107,6 @@ func captureStdout(t *testing.T, fn func()) string {
 		t.Fatalf("close reader error = %v", err)
 	}
 	return string(data)
-}
-
-func TestApplyGuardsDownPreset(t *testing.T) {
-	configPath := filepath.Join(t.TempDir(), "pinchtab", "config.json")
-	t.Setenv("PINCHTAB_CONFIG", configPath)
-
-	fc := config.DefaultFileConfig()
-	fc.Server.Token = "guarded-token"
-	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
-		t.Fatalf("MkdirAll() error = %v", err)
-	}
-	if err := config.SaveFileConfig(&fc, configPath); err != nil {
-		t.Fatalf("SaveFileConfig() error = %v", err)
-	}
-
-	cfg, gotPath, changed, err := applyGuardsDownPreset()
-	if err != nil {
-		t.Fatalf("applyGuardsDownPreset() error = %v", err)
-	}
-	if !changed {
-		t.Fatal("expected guards down preset to change config")
-	}
-	if gotPath != configPath {
-		t.Fatalf("config path = %q, want %q", gotPath, configPath)
-	}
-
-	if cfg.Bind != "127.0.0.1" {
-		t.Fatalf("Bind = %q, want 127.0.0.1", cfg.Bind)
-	}
-	if cfg.Token != "guarded-token" {
-		t.Fatalf("Token = %q, want existing token to remain", cfg.Token)
-	}
-	if !cfg.AllowEvaluate || !cfg.AllowMacro || !cfg.AllowScreencast || !cfg.AllowDownload || !cfg.AllowUpload {
-		t.Fatalf("expected sensitive endpoints enabled, got %+v", cfg)
-	}
-	if !cfg.AttachEnabled {
-		t.Fatal("expected attach endpoint enabled")
-	}
-	if got := strings.Join(cfg.AttachAllowHosts, ","); got != "127.0.0.1,localhost,::1" {
-		t.Fatalf("AttachAllowHosts = %q", got)
-	}
-	if got := strings.Join(cfg.AttachAllowSchemes, ","); got != "ws,wss" {
-		t.Fatalf("AttachAllowSchemes = %q", got)
-	}
-	if cfg.IDPI.Enabled || cfg.IDPI.StrictMode || cfg.IDPI.ScanContent || cfg.IDPI.WrapContent {
-		t.Fatalf("expected IDPI protections disabled, got %+v", cfg.IDPI)
-	}
 }
 
 func testRuntimeConfig() *config.RuntimeConfig {

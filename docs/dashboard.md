@@ -12,6 +12,9 @@ You can open the dashboard at:
 - `http://localhost:9867`
 - `http://localhost:9867/dashboard`
 
+> [!WARNING]
+> The dashboard is an operator/admin control surface, not a public or multi-user application. Do not expose it to untrusted users. Anyone who can use the dashboard can manage profiles, instances, configuration, and other browser-control capabilities that are enabled on that server.
+
 ---
 
 ## Dashboard overview
@@ -96,7 +99,7 @@ curl -X POST http://localhost:9867/instances/start \
   -H "Content-Type: application/json" \
   -d '{"profileId":"prof_278be873","mode":"headed"}'
 # CLI Alternative
-pinchtab instance start --profileId prof_278be873 --mode headed
+pinchtab instance start --profile prof_278be873 --mode headed
 # Response
 {
   "id": "inst_ea2e747f",

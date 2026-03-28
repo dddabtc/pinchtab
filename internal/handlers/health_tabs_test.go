@@ -12,6 +12,8 @@ import (
 	"github.com/chromedp/cdproto/target"
 	"github.com/pinchtab/pinchtab/internal/bridge"
 	"github.com/pinchtab/pinchtab/internal/config"
+	"github.com/pinchtab/pinchtab/internal/engine"
+	"github.com/pinchtab/pinchtab/internal/stealth"
 )
 
 // TestHandleHealth_NilBridge verifies health endpoint returns 503 when bridge is nil
@@ -172,6 +174,47 @@ func TestHandleTabs_Success(t *testing.T) {
 	}
 }
 
+func TestHandleTabs_CurrentTrackedTabIsReturnedFirst(t *testing.T) {
+	mockBridge := &MockBridge{
+		targets: []*target.Info{
+			{TargetID: "tab1", URL: "https://pinchtab.com", Title: "Example", Type: "page"},
+			{TargetID: "tab2", URL: "https://google.com", Title: "Google", Type: "page"},
+			{TargetID: "tab3", URL: "https://example.com", Title: "Example 2", Type: "page"},
+		},
+		currentTabID: "tab2",
+	}
+
+	h := &Handlers{
+		Bridge: mockBridge,
+		Config: &config.RuntimeConfig{},
+	}
+
+	req := httptest.NewRequest("GET", "/tabs", nil)
+	w := httptest.NewRecorder()
+
+	h.HandleTabs(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var resp struct {
+		Tabs []struct {
+			ID string `json:"id"`
+		} `json:"tabs"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	if len(resp.Tabs) != 3 {
+		t.Fatalf("expected 3 tabs, got %d", len(resp.Tabs))
+	}
+	if resp.Tabs[0].ID != "tab2" {
+		t.Fatalf("expected current tracked tab first, got %q", resp.Tabs[0].ID)
+	}
+}
+
 // TestHandleHealth_EnsureChromeFailure verifies /health returns 503 when Chrome initialization fails
 func TestHandleHealth_EnsureChromeFailure(t *testing.T) {
 	mockBridge := &MockBridge{
@@ -255,6 +298,43 @@ func TestHandleHealth_EnsureChromeSuccess(t *testing.T) {
 	}
 }
 
+func TestHandleHealth_LiteModeSkipsChrome(t *testing.T) {
+	mockBridge := &MockBridge{
+		ensureChromeErr: "should not be called",
+	}
+
+	h := &Handlers{
+		Bridge: mockBridge,
+		Config: &config.RuntimeConfig{},
+		Router: engine.NewRouter(engine.ModeLite, engine.NewLiteEngine()),
+	}
+
+	req := httptest.NewRequest("GET", "/health", nil)
+	w := httptest.NewRecorder()
+
+	h.HandleHealth(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	if mockBridge.ensureChromeCalled {
+		t.Error("expected lite health to skip ensureChrome")
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	if status, ok := resp["status"]; !ok || status != "ok" {
+		t.Errorf("expected status=ok, got %v", status)
+	}
+	if engineName, ok := resp["engine"]; !ok || engineName != "lite" {
+		t.Errorf("expected engine=lite, got %v", engineName)
+	}
+}
+
 // contains is a simple helper to check if a string contains a substring
 func contains(s, substr string) bool {
 	for i := 0; i <= len(s)-len(substr); i++ {
@@ -271,6 +351,7 @@ type MockBridge struct {
 	listTargetsErr     string
 	ensureChromeCalled bool
 	ensureChromeErr    string
+	currentTabID       string
 }
 
 func (m *MockBridge) ListTargets() ([]*target.Info, error) {
@@ -285,6 +366,9 @@ func (m *MockBridge) BrowserContext() context.Context {
 }
 
 func (m *MockBridge) TabContext(tabID string) (context.Context, string, error) {
+	if tabID == "" && m.currentTabID != "" {
+		return context.Background(), m.currentTabID, nil
+	}
 	return context.Background(), tabID, nil
 }
 
@@ -338,6 +422,17 @@ func (m *MockBridge) EnsureChrome(cfg *config.RuntimeConfig) error {
 	return nil
 }
 
+func (m *MockBridge) StealthStatus() *stealth.Status {
+	return &stealth.Status{
+		Level:         stealth.LevelLight,
+		LaunchMode:    stealth.LaunchModeUninitialized,
+		WebdriverMode: stealth.WebdriverModeNativeBaseline,
+		Flags:         map[string]bool{},
+		Capabilities:  map[string]bool{},
+		TabOverrides:  map[string]bool{"fingerprintRotateActive": false},
+	}
+}
+
 func (m *MockBridge) GetMemoryMetrics(tabID string) (*bridge.MemoryMetrics, error) {
 	return &bridge.MemoryMetrics{JSHeapUsedMB: 10, JSHeapTotalMB: 20}, nil
 }
@@ -365,6 +460,18 @@ func (m *MockBridge) GetDialogManager() *bridge.DialogManager {
 func (m *MockBridge) Execute(ctx context.Context, tabID string, task func(ctx context.Context) error) error {
 	return task(ctx)
 }
+
+func (m *MockBridge) GetConsoleLogs(tabID string, limit int) []bridge.LogEntry {
+	return nil
+}
+
+func (m *MockBridge) ClearConsoleLogs(tabID string) {}
+
+func (m *MockBridge) GetErrorLogs(tabID string, limit int) []bridge.ErrorEntry {
+	return nil
+}
+
+func (m *MockBridge) ClearErrorLogs(tabID string) {}
 
 type mockBridgeDisconnected struct {
 	mockBridge

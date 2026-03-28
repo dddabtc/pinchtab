@@ -8,8 +8,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pinchtab/pinchtab/internal/web"
+	"github.com/pinchtab/pinchtab/internal/authn"
+	"github.com/pinchtab/pinchtab/internal/httpx"
 )
+
+type startInstanceRequest struct {
+	ProfileID      string   `json:"profileId,omitempty"`
+	Mode           string   `json:"mode,omitempty"`
+	Port           string   `json:"port,omitempty"`
+	ExtensionPaths []string `json:"extensionPaths,omitempty"`
+}
 
 func (o *Orchestrator) handleGetInstance(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
@@ -17,7 +25,7 @@ func (o *Orchestrator) handleGetInstance(w http.ResponseWriter, r *http.Request)
 	inst, ok := o.instances[id]
 	if !ok {
 		o.mu.RUnlock()
-		web.Error(w, 404, fmt.Errorf("instance %q not found", id))
+		httpx.Error(w, 404, fmt.Errorf("instance %q not found", id))
 		return
 	}
 
@@ -33,68 +41,38 @@ func (o *Orchestrator) handleGetInstance(w http.ResponseWriter, r *http.Request)
 		copyInst.Status = "stopped"
 	}
 
-	web.JSON(w, 200, copyInst)
+	httpx.JSON(w, 200, copyInst)
 }
 
 func (o *Orchestrator) handleLaunchByName(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ProfileId      string   `json:"profileId,omitempty"`
-		Name           string   `json:"name,omitempty"`
-		Mode           string   `json:"mode"`
-		Port           string   `json:"port,omitempty"`
-		ExtensionPaths []string `json:"extensionPaths,omitempty"`
+		startInstanceRequest
+		Name string `json:"name,omitempty"`
 	}
 
 	if r.ContentLength > 0 {
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			web.Error(w, 400, fmt.Errorf("invalid JSON"))
+		if err := httpx.DecodeJSONBody(w, r, 0, &req); err != nil {
+			httpx.Error(w, httpx.StatusForJSONDecodeError(err), fmt.Errorf("invalid JSON"))
 			return
 		}
 	}
 
-	headless := req.Mode != "headed"
-
-	var name string
-	if req.ProfileId != "" {
-		profs, err := o.profiles.List()
-		if err != nil {
-			web.Error(w, 500, fmt.Errorf("failed to list profiles: %w", err))
-			return
-		}
-		found := false
-		for _, p := range profs {
-			if p.ID == req.ProfileId {
-				name = p.Name
-				found = true
-				break
-			}
-		}
-		if !found {
-			web.Error(w, 400, fmt.Errorf("profile %q not found", req.ProfileId))
-			return
-		}
-	} else if req.Name != "" {
-		name = req.Name
-	} else {
-		name = fmt.Sprintf("instance-%d", time.Now().UnixNano())
-	}
-
-	inst, err := o.Launch(name, req.Port, headless, req.ExtensionPaths)
-	if err != nil {
-		statusCode := classifyLaunchError(err)
-		web.Error(w, statusCode, err)
+	if req.Name != "" {
+		httpx.Error(w, 400, fmt.Errorf("name is not supported on /instances/launch; create the profile first via /profiles and then use profileId"))
 		return
 	}
-	web.JSON(w, 201, inst)
+
+	o.startInstanceWithRequest(w, r, req.startInstanceRequest, "instance.launched")
 }
 
 func (o *Orchestrator) handleStopByInstanceID(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if err := o.Stop(id); err != nil {
-		web.Error(w, 404, err)
+		httpx.Error(w, 404, err)
 		return
 	}
-	web.JSON(w, 200, map[string]string{"status": "stopped", "id": id})
+	authn.AuditLog(r, "instance.stopped", "instanceId", id)
+	httpx.JSON(w, 200, map[string]string{"status": "stopped", "id": id})
 }
 
 func (o *Orchestrator) handleStartByInstanceID(w http.ResponseWriter, r *http.Request) {
@@ -104,7 +82,7 @@ func (o *Orchestrator) handleStartByInstanceID(w http.ResponseWriter, r *http.Re
 	inst, ok := o.instances[id]
 	if !ok {
 		o.mu.RUnlock()
-		web.Error(w, 404, fmt.Errorf("instance %q not found", id))
+		httpx.Error(w, 404, fmt.Errorf("instance %q not found", id))
 		return
 	}
 	active := instanceIsActive(inst)
@@ -114,14 +92,14 @@ func (o *Orchestrator) handleStartByInstanceID(w http.ResponseWriter, r *http.Re
 	o.mu.RUnlock()
 
 	if inst.Attached && inst.AttachType != "bridge" {
-		web.Error(w, 409, fmt.Errorf("attached instance %q cannot be started by the orchestrator", id))
+		httpx.Error(w, 409, fmt.Errorf("attached instance %q cannot be started by the orchestrator", id))
 		return
 	}
 
 	if active {
 		targetURL, targetErr := o.instancePathURL(inst, "/ensure-chrome", "")
 		if targetErr != nil {
-			web.Error(w, 502, targetErr)
+			httpx.Error(w, 502, targetErr)
 			return
 		}
 		o.proxyToURL(w, r, targetURL)
@@ -129,24 +107,25 @@ func (o *Orchestrator) handleStartByInstanceID(w http.ResponseWriter, r *http.Re
 	}
 
 	if inst.Attached {
-		web.Error(w, 409, fmt.Errorf("attached instance %q cannot be started by the orchestrator", id))
+		httpx.Error(w, 409, fmt.Errorf("attached instance %q cannot be started by the orchestrator", id))
 		return
 	}
 
 	started, err := o.Launch(profileName, port, headless, nil)
 	if err != nil {
 		statusCode := classifyLaunchError(err)
-		web.Error(w, statusCode, err)
+		httpx.Error(w, statusCode, err)
 		return
 	}
-	web.JSON(w, 201, started)
+	authn.AuditLog(r, "instance.started", "instanceId", started.ID, "profileName", profileName)
+	httpx.JSON(w, 201, started)
 }
 
 func (o *Orchestrator) handleLogsByID(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	logs, err := o.Logs(id)
 	if err != nil {
-		web.Error(w, 404, err)
+		httpx.Error(w, 404, err)
 		return
 	}
 	w.Header().Set("Content-Type", "text/plain")
@@ -168,7 +147,7 @@ func (o *Orchestrator) handleLogsStreamByID(w http.ResponseWriter, r *http.Reque
 	id := r.PathValue("id")
 	initial, err := o.Logs(id)
 	if err != nil {
-		web.Error(w, 404, err)
+		httpx.Error(w, 404, err)
 		return
 	}
 
@@ -222,27 +201,26 @@ func (o *Orchestrator) handleLogsStreamByID(w http.ResponseWriter, r *http.Reque
 }
 
 func (o *Orchestrator) handleStartInstance(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		ProfileID      string   `json:"profileId,omitempty"`
-		Mode           string   `json:"mode,omitempty"`
-		Port           string   `json:"port,omitempty"`
-		ExtensionPaths []string `json:"extensionPaths,omitempty"`
-	}
+	var req startInstanceRequest
 
 	if r.ContentLength > 0 {
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			web.Error(w, 400, fmt.Errorf("invalid JSON"))
+		if err := httpx.DecodeJSONBody(w, r, 0, &req); err != nil {
+			httpx.Error(w, httpx.StatusForJSONDecodeError(err), fmt.Errorf("invalid JSON"))
 			return
 		}
 	}
 
+	o.startInstanceWithRequest(w, r, req, "instance.started")
+}
+
+func (o *Orchestrator) startInstanceWithRequest(w http.ResponseWriter, r *http.Request, req startInstanceRequest, auditEvent string) {
 	var profileName string
 	var err error
 
 	if req.ProfileID != "" {
 		profileName, err = o.resolveProfileName(req.ProfileID)
 		if err != nil {
-			web.Error(w, 404, fmt.Errorf("profile %q not found", req.ProfileID))
+			httpx.Error(w, 404, fmt.Errorf("profile %q not found", req.ProfileID))
 			return
 		}
 	} else {
@@ -254,11 +232,12 @@ func (o *Orchestrator) handleStartInstance(w http.ResponseWriter, r *http.Reques
 	inst, err := o.Launch(profileName, req.Port, headless, req.ExtensionPaths)
 	if err != nil {
 		statusCode := classifyLaunchError(err)
-		web.Error(w, statusCode, err)
+		httpx.Error(w, statusCode, err)
 		return
 	}
 
-	web.JSON(w, 201, inst)
+	authn.AuditLog(r, auditEvent, "instanceId", inst.ID, "profileName", profileName)
+	httpx.JSON(w, 201, inst)
 }
 
 func (o *Orchestrator) handleInstanceTabs(w http.ResponseWriter, r *http.Request) {
@@ -269,18 +248,18 @@ func (o *Orchestrator) handleInstanceTabs(w http.ResponseWriter, r *http.Request
 	o.mu.RUnlock()
 
 	if !ok {
-		web.Error(w, 404, fmt.Errorf("instance %q not found", id))
+		httpx.Error(w, 404, fmt.Errorf("instance %q not found", id))
 		return
 	}
 
 	if inst.Status != "running" || !instanceIsActive(inst) {
-		web.Error(w, 503, fmt.Errorf("instance %q is not running (status: %s)", id, inst.Status))
+		httpx.Error(w, 503, fmt.Errorf("instance %q is not running (status: %s)", id, inst.Status))
 		return
 	}
 
 	tabs, err := o.fetchTabs(inst)
 	if err != nil {
-		web.Error(w, 502, fmt.Errorf("failed to fetch tabs for instance %q: %w", id, err))
+		httpx.Error(w, 502, fmt.Errorf("failed to fetch tabs for instance %q: %w", id, err))
 		return
 	}
 
@@ -294,7 +273,7 @@ func (o *Orchestrator) handleInstanceTabs(w http.ResponseWriter, r *http.Request
 		})
 	}
 
-	web.JSON(w, 200, result)
+	httpx.JSON(w, 200, result)
 }
 
 func (o *Orchestrator) handleAttachInstance(w http.ResponseWriter, r *http.Request) {
@@ -303,19 +282,19 @@ func (o *Orchestrator) handleAttachInstance(w http.ResponseWriter, r *http.Reque
 		Name   string `json:"name,omitempty"`
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		web.Error(w, 400, fmt.Errorf("invalid JSON"))
+	if err := httpx.DecodeJSONBody(w, r, 0, &req); err != nil {
+		httpx.Error(w, httpx.StatusForJSONDecodeError(err), fmt.Errorf("invalid JSON"))
 		return
 	}
 
 	if req.CdpURL == "" {
-		web.Error(w, 400, fmt.Errorf("cdpUrl is required"))
+		httpx.Error(w, 400, fmt.Errorf("cdpUrl is required"))
 		return
 	}
 
 	// Validate attach is enabled and URL is allowed
 	if err := o.validateAttachURL(req.CdpURL); err != nil {
-		web.Error(w, 403, err)
+		httpx.Error(w, 403, err)
 		return
 	}
 
@@ -327,11 +306,12 @@ func (o *Orchestrator) handleAttachInstance(w http.ResponseWriter, r *http.Reque
 
 	inst, err := o.Attach(name, req.CdpURL)
 	if err != nil {
-		web.Error(w, classifyLaunchError(err), err)
+		httpx.Error(w, classifyLaunchError(err), err)
 		return
 	}
 
-	web.JSON(w, 201, inst)
+	authn.AuditLog(r, "instance.attached", "instanceId", inst.ID, "instanceName", inst.ProfileName, "attachType", "cdp")
+	httpx.JSON(w, 201, inst)
 }
 
 func (o *Orchestrator) handleAttachBridge(w http.ResponseWriter, r *http.Request) {
@@ -341,20 +321,20 @@ func (o *Orchestrator) handleAttachBridge(w http.ResponseWriter, r *http.Request
 		Token   string `json:"token,omitempty"`
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		web.Error(w, 400, fmt.Errorf("invalid JSON"))
+	if err := httpx.DecodeJSONBody(w, r, 0, &req); err != nil {
+		httpx.Error(w, httpx.StatusForJSONDecodeError(err), fmt.Errorf("invalid JSON"))
 		return
 	}
 	if req.BaseURL == "" {
-		web.Error(w, 400, fmt.Errorf("baseUrl is required"))
+		httpx.Error(w, 400, fmt.Errorf("baseUrl is required"))
 		return
 	}
 	if err := o.validateAttachURL(req.BaseURL); err != nil {
-		web.Error(w, 403, err)
+		httpx.Error(w, 403, err)
 		return
 	}
 	if err := o.probeAttachBridge(req.BaseURL, req.Token); err != nil {
-		web.Error(w, 502, err)
+		httpx.Error(w, 502, err)
 		return
 	}
 
@@ -363,35 +343,29 @@ func (o *Orchestrator) handleAttachBridge(w http.ResponseWriter, r *http.Request
 		name = fmt.Sprintf("bridge-%d", time.Now().UnixNano())
 	}
 
-	inst, err := o.AttachBridge(name, req.BaseURL, req.Token)
+	inst, created, err := o.AttachBridge(name, req.BaseURL, req.Token)
 	if err != nil {
-		web.Error(w, classifyLaunchError(err), err)
+		httpx.Error(w, classifyLaunchError(err), err)
 		return
 	}
-	web.JSON(w, 201, inst)
+	if created {
+		authn.AuditLog(r, "instance.attached", "instanceId", inst.ID, "instanceName", inst.ProfileName, "attachType", "bridge")
+		httpx.JSON(w, 201, inst)
+	} else {
+		authn.AuditLog(r, "instance.reattached", "instanceId", inst.ID, "instanceName", inst.ProfileName, "attachType", "bridge")
+		httpx.JSON(w, 200, inst)
+	}
 }
 
 // probeAttachBridge checks that a remote bridge is reachable.
 // The baseURL MUST have been validated by validateAttachURL before calling this.
 func (o *Orchestrator) probeAttachBridge(baseURL, token string) error {
-	parsed, err := url.Parse(strings.TrimRight(baseURL, "/"))
+	targetBaseURL, err := o.validatedHealthProbeBaseURL(strings.TrimRight(baseURL, "/"), "", healthProbePolicyAttachAllowlist)
 	if err != nil {
 		return fmt.Errorf("invalid bridge baseUrl: %w", err)
 	}
 
-	// Re-validate scheme inside this function so the safety check is visible
-	// to static analysis (CodeQL SSRF). validateAttachURL already enforces
-	// the allowlist, but CodeQL can't trace across function boundaries.
-	switch parsed.Scheme {
-	case "http", "https":
-		// allowed
-	default:
-		return fmt.Errorf("unsupported bridge scheme %q", parsed.Scheme)
-	}
-
-	healthURL := parsed.Scheme + "://" + parsed.Host + "/health"
-
-	req, err := http.NewRequest(http.MethodGet, healthURL, nil)
+	req, err := http.NewRequest(http.MethodGet, healthProbeURL(targetBaseURL), nil)
 	if err != nil {
 		return fmt.Errorf("build bridge health request: %w", err)
 	}
@@ -436,22 +410,32 @@ func (o *Orchestrator) validateAttachURL(rawURL string) error {
 		return fmt.Errorf("scheme %q not allowed (allowed: %v)", parsed.Scheme, o.runtimeCfg.AttachAllowSchemes)
 	}
 
-	if (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Path != "" && parsed.Path != "/" {
-		return fmt.Errorf("bridge baseUrl must not include a path")
+	if parsed.Scheme == "http" || parsed.Scheme == "https" {
+		if parsed.Path != "" && parsed.Path != "/" {
+			return fmt.Errorf("bridge baseUrl must not include a path")
+		}
+		if parsed.User != nil {
+			return fmt.Errorf("bridge baseUrl must not include userinfo")
+		}
+		if parsed.RawQuery != "" || parsed.Fragment != "" {
+			return fmt.Errorf("bridge baseUrl must not include query or fragment")
+		}
 	}
 
 	// Validate host
 	host := parsed.Hostname()
-	hostAllowed := false
-	for _, allowed := range o.runtimeCfg.AttachAllowHosts {
-		if host == allowed {
-			hostAllowed = true
-			break
-		}
-	}
-	if !hostAllowed {
+	if !isAllowedAttachHost(host, o.runtimeCfg.AttachAllowHosts) {
 		return fmt.Errorf("host %q not allowed (allowed: %v)", host, o.runtimeCfg.AttachAllowHosts)
 	}
 
 	return nil
+}
+
+func isAllowedAttachHost(host string, allowedHosts []string) bool {
+	for _, allowed := range allowedHosts {
+		if allowed == "*" || host == allowed {
+			return true
+		}
+	}
+	return false
 }

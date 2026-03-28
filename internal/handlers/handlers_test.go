@@ -5,10 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/chromedp/cdproto/target"
 	"github.com/chromedp/chromedp"
@@ -18,7 +20,11 @@ import (
 
 type mockBridge struct {
 	bridge.BridgeAPI
-	failTab bool
+	failTab          bool
+	createTabURLs    []string
+	lastConsoleLimit int
+	lastErrorLimit   int
+	fingerprintTabs  map[string]bool
 }
 
 func (m *mockBridge) TabContext(tabID string) (context.Context, string, error) {
@@ -44,6 +50,7 @@ func (m *mockBridge) ExecuteAction(ctx context.Context, kind string, req bridge.
 }
 
 func (m *mockBridge) CreateTab(url string) (string, context.Context, context.CancelFunc, error) {
+	m.createTabURLs = append(m.createTabURLs, url)
 	ctx, cancel := chromedp.NewContext(context.Background())
 	return "tab_abc12345", ctx, cancel, nil
 }
@@ -95,8 +102,33 @@ func (m *mockBridge) GetDialogManager() *bridge.DialogManager {
 	return bridge.NewDialogManager()
 }
 
+func (m *mockBridge) GetConsoleLogs(tabID string, limit int) []bridge.LogEntry {
+	m.lastConsoleLimit = limit
+	return nil
+}
+
+func (m *mockBridge) ClearConsoleLogs(tabID string) {}
+
+func (m *mockBridge) GetErrorLogs(tabID string, limit int) []bridge.ErrorEntry {
+	m.lastErrorLimit = limit
+	return nil
+}
+
+func (m *mockBridge) ClearErrorLogs(tabID string) {}
+
 func (m *mockBridge) Execute(ctx context.Context, tabID string, task func(ctx context.Context) error) error {
 	return task(ctx)
+}
+
+func (m *mockBridge) SetFingerprintRotateActive(tabID string, active bool) {
+	if m.fingerprintTabs == nil {
+		m.fingerprintTabs = make(map[string]bool)
+	}
+	m.fingerprintTabs[tabID] = active
+}
+
+func (m *mockBridge) FingerprintRotateActive(tabID string) bool {
+	return m.fingerprintTabs != nil && m.fingerprintTabs[tabID]
 }
 
 func TestHandlers(t *testing.T) {
@@ -172,6 +204,10 @@ func TestOpenAPIIncludesSensitiveEndpointStatus(t *testing.T) {
 }
 
 func TestHandleNavigate(t *testing.T) {
+	stubNavigateHostResolution(t, func(context.Context, string, string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("93.184.216.34")}, nil
+	})
+
 	cfg := &config.RuntimeConfig{}
 	m := &mockBridge{}
 	h := New(m, cfg, nil, nil, nil)
@@ -202,10 +238,18 @@ func TestHandleNavigate(t *testing.T) {
 	if w.Code != 400 {
 		t.Errorf("expected 400 for missing url, got %d", w.Code)
 	}
+
+	if len(m.createTabURLs) == 0 {
+		t.Fatalf("expected CreateTab to be called for new-tab navigate")
+	}
+	if m.createTabURLs[0] != "" {
+		t.Fatalf("expected HandleNavigate to create a blank tab first, got %q", m.createTabURLs[0])
+	}
 }
 
 func TestHandleTab(t *testing.T) {
-	h := New(&mockBridge{}, &config.RuntimeConfig{}, nil, nil, nil)
+	m := &mockBridge{}
+	h := New(m, &config.RuntimeConfig{}, nil, nil, nil)
 
 	// New Tab
 	body := `{"action": "new", "url": "about:blank"}`
@@ -215,6 +259,12 @@ func TestHandleTab(t *testing.T) {
 	if w.Code != 200 && w.Code != 500 {
 		t.Errorf("unexpected status %d", w.Code)
 	}
+	if len(m.createTabURLs) == 0 {
+		t.Fatalf("expected CreateTab to be called for action=new")
+	}
+	if m.createTabURLs[0] != "" {
+		t.Fatalf("expected HandleTab to create a blank tab first, got %q", m.createTabURLs[0])
+	}
 
 	// Close Tab
 	body = `{"action": "close", "tabId": "tab1"}`
@@ -223,6 +273,122 @@ func TestHandleTab(t *testing.T) {
 	h.HandleTab(w, req)
 	if w.Code != 200 {
 		t.Errorf("expected 200, got %d", w.Code)
+	}
+}
+
+func TestHandleGetErrorLogs_ClampsLimit(t *testing.T) {
+	tests := []struct {
+		name     string
+		limit    string
+		expected int
+	}{
+		{name: "negative", limit: "-5", expected: 0},
+		{name: "too_large", limit: "1001", expected: 1000},
+		{name: "in_range", limit: "25", expected: 25},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := &mockBridge{}
+			h := New(m, &config.RuntimeConfig{}, nil, nil, nil)
+
+			req := httptest.NewRequest("GET", "/errors?limit="+tt.limit, nil)
+			w := httptest.NewRecorder()
+			h.HandleGetErrorLogs(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d", w.Code)
+			}
+			if m.lastErrorLimit != tt.expected {
+				t.Fatalf("expected limit %d, got %d", tt.expected, m.lastErrorLimit)
+			}
+		})
+	}
+}
+
+func TestHandleGetConsoleLogs_ClampsLimit(t *testing.T) {
+	tests := []struct {
+		name     string
+		limit    string
+		expected int
+	}{
+		{name: "negative", limit: "-5", expected: 0},
+		{name: "too_large", limit: "1001", expected: 1000},
+		{name: "in_range", limit: "25", expected: 25},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := &mockBridge{}
+			h := New(m, &config.RuntimeConfig{}, nil, nil, nil)
+
+			req := httptest.NewRequest("GET", "/console?limit="+tt.limit, nil)
+			w := httptest.NewRecorder()
+			h.HandleGetConsoleLogs(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d", w.Code)
+			}
+			if m.lastConsoleLimit != tt.expected {
+				t.Fatalf("expected limit %d, got %d", tt.expected, m.lastConsoleLimit)
+			}
+		})
+	}
+}
+
+func TestHandleGetConsoleLogs_BlocksWhenCachedTabPolicyIsBlocked(t *testing.T) {
+	b := &policyMockBridge{
+		state: bridge.TabPolicyState{
+			CurrentURL: "https://evil.example.net",
+			Threat:     true,
+			Blocked:    true,
+			Reason:     `domain "evil.example.net" is not in the allowed list`,
+			UpdatedAt:  time.Now(),
+		},
+		hasState: true,
+	}
+	h := New(b, &config.RuntimeConfig{
+		IDPI: config.IDPIConfig{
+			Enabled:        true,
+			AllowedDomains: []string{"example.com"},
+			StrictMode:     true,
+		},
+	}, nil, nil, nil)
+
+	req := httptest.NewRequest("GET", "/console?tabId=tab1", nil)
+	w := httptest.NewRecorder()
+	h.HandleGetConsoleLogs(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleGetErrorLogs_BlocksWhenCachedTabPolicyIsBlocked(t *testing.T) {
+	b := &policyMockBridge{
+		state: bridge.TabPolicyState{
+			CurrentURL: "https://evil.example.net",
+			Threat:     true,
+			Blocked:    true,
+			Reason:     `domain "evil.example.net" is not in the allowed list`,
+			UpdatedAt:  time.Now(),
+		},
+		hasState: true,
+	}
+	h := New(b, &config.RuntimeConfig{
+		IDPI: config.IDPIConfig{
+			Enabled:        true,
+			AllowedDomains: []string{"example.com"},
+			StrictMode:     true,
+		},
+	}, nil, nil, nil)
+
+	req := httptest.NewRequest("GET", "/errors?tabId=tab1", nil)
+	w := httptest.NewRecorder()
+	h.HandleGetErrorLogs(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", w.Code, w.Body.String())
 	}
 }
 

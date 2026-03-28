@@ -31,6 +31,7 @@ export interface DashboardServerInfo {
   mode: string;
   version: string;
   uptime: number;
+  authRequired?: boolean;
   profiles: number;
   instances: number;
   agents: number;
@@ -57,6 +58,7 @@ export interface BackendServerConfig {
   bind: string;
   token: string;
   stateDir: string;
+  trustProxyHeaders: boolean;
 }
 
 export interface BackendBrowserConfig {
@@ -77,7 +79,7 @@ export interface BackendInstanceDefaultsConfig {
   maxParallelTabs: number;
   userAgent: string;
   noAnimations: boolean;
-  stealthLevel: "light" | "full";
+  stealthLevel: "light" | "medium" | "full";
   tabEvictionPolicy: "reject" | "close_oldest" | "close_lru";
 }
 
@@ -97,7 +99,12 @@ export interface BackendProfilesConfig {
 }
 
 export interface BackendMultiInstanceConfig {
-  strategy: "simple" | "explicit" | "simple-autorestart" | "always-on";
+  strategy:
+    | "simple"
+    | "explicit"
+    | "simple-autorestart"
+    | "always-on"
+    | "no-instance";
   allocationPolicy: "fcfs" | "round_robin" | "random";
   instancePortStart: number;
   instancePortEnd: number;
@@ -146,6 +153,7 @@ export interface BackendConfig {
 export interface BackendConfigState {
   config: BackendConfig;
   configPath: string;
+  tokenConfigured: boolean;
   restartRequired: boolean;
   restartReasons: string[];
 }
@@ -156,6 +164,7 @@ export const defaultBackendConfig: BackendConfig = {
     bind: "127.0.0.1",
     token: "",
     stateDir: "",
+    trustProxyHeaders: false,
   },
   browser: {
     version: "144.0.7559.133",
@@ -285,6 +294,7 @@ export function normalizeBackendConfigState(
   return {
     config: normalizeBackendConfig(input.config),
     configPath: input.configPath ?? "",
+    tokenConfigured: input.tokenConfigured ?? false,
     restartRequired: input.restartRequired ?? false,
     restartReasons: input.restartReasons ?? [],
   };
@@ -295,6 +305,7 @@ export function normalizeDashboardServerInfo(
 ): DashboardServerInfo {
   return {
     ...input,
+    authRequired: input.authRequired ?? false,
     restartRequired: input.restartRequired ?? false,
     restartReasons: input.restartReasons ?? [],
   };

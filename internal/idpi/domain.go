@@ -24,6 +24,9 @@ func CheckDomain(rawURL string, cfg config.IDPIConfig) CheckResult {
 	if !cfg.Enabled || len(cfg.AllowedDomains) == 0 {
 		return CheckResult{}
 	}
+	if isAllowedSpecialURL(rawURL) {
+		return CheckResult{}
+	}
 
 	host := extractHost(rawURL)
 	if host == "" {
@@ -34,18 +37,29 @@ func CheckDomain(rawURL string, cfg config.IDPIConfig) CheckResult {
 			"URL has no domain component and cannot be verified against allowedDomains")
 	}
 
-	for _, pattern := range cfg.AllowedDomains {
-		pattern = strings.ToLower(strings.TrimSpace(pattern))
-		if pattern == "" {
-			continue
-		}
-		if matchDomain(host, pattern) {
-			return CheckResult{}
-		}
+	if domainAllowed(host, cfg.AllowedDomains) {
+		return CheckResult{}
 	}
 
 	return makeResult(cfg.StrictMode,
 		fmt.Sprintf("domain %q is not in the allowed list (security.idpi.allowedDomains)", host))
+}
+
+// DomainAllowed reports whether rawURL's host matches an explicit allowedDomains
+// entry under an active IDPI domain allowlist.
+func DomainAllowed(rawURL string, cfg config.IDPIConfig) bool {
+	if !cfg.Enabled || len(cfg.AllowedDomains) == 0 || isAllowedSpecialURL(rawURL) {
+		return false
+	}
+	host := extractHost(rawURL)
+	if host == "" {
+		return false
+	}
+	return domainAllowed(host, cfg.AllowedDomains)
+}
+
+func isAllowedSpecialURL(rawURL string) bool {
+	return strings.EqualFold(strings.TrimSpace(rawURL), "about:blank")
 }
 
 // extractHost parses rawURL and returns the lowercase bare hostname (no port).
@@ -74,6 +88,19 @@ func extractHost(rawURL string) string {
 	}
 
 	return strings.ToLower(strings.TrimSpace(host))
+}
+
+func domainAllowed(host string, patterns []string) bool {
+	for _, pattern := range patterns {
+		pattern = strings.ToLower(strings.TrimSpace(pattern))
+		if pattern == "" {
+			continue
+		}
+		if matchDomain(host, pattern) {
+			return true
+		}
+	}
+	return false
 }
 
 // matchDomain reports whether host matches pattern (both already lowercased).

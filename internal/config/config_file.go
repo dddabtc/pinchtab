@@ -23,9 +23,15 @@ func DefaultFileConfig() FileConfig {
 	allowMacro := false
 	allowScreencast := false
 	allowDownload := false
+	downloadMaxBytes := DefaultDownloadMaxBytes
 	allowUpload := false
+	allowClipboard := false
+	uploadMaxRequestBytes := DefaultUploadMaxRequestBytes
+	uploadMaxFiles := DefaultUploadMaxFiles
+	uploadMaxFileBytes := DefaultUploadMaxFileBytes
+	uploadMaxTotalBytes := DefaultUploadMaxTotalBytes
 	maxRedirects := -1
-	attachEnabled := true
+	attachEnabled := false
 	activityEnabled := true
 	activitySessionIdleSec := 1800
 	activityRetentionDays := 1
@@ -46,12 +52,19 @@ func DefaultFileConfig() FileConfig {
 			TabEvictionPolicy: "close_lru",
 		},
 		Security: SecurityConfig{
-			AllowEvaluate:   &allowEvaluate,
-			AllowMacro:      &allowMacro,
-			AllowScreencast: &allowScreencast,
-			AllowDownload:   &allowDownload,
-			AllowUpload:     &allowUpload,
-			MaxRedirects:    &maxRedirects,
+			AllowEvaluate:          &allowEvaluate,
+			AllowMacro:             &allowMacro,
+			AllowScreencast:        &allowScreencast,
+			AllowDownload:          &allowDownload,
+			DownloadAllowedDomains: []string{},
+			DownloadMaxBytes:       &downloadMaxBytes,
+			AllowUpload:            &allowUpload,
+			AllowClipboard:         &allowClipboard,
+			UploadMaxRequestBytes:  &uploadMaxRequestBytes,
+			UploadMaxFiles:         &uploadMaxFiles,
+			UploadMaxFileBytes:     &uploadMaxFileBytes,
+			UploadMaxTotalBytes:    &uploadMaxTotalBytes,
+			MaxRedirects:           &maxRedirects,
 			Attach: AttachConfig{
 				Enabled:      &attachEnabled,
 				AllowHosts:   []string{"127.0.0.1", "localhost", "::1"},
@@ -118,11 +131,14 @@ type serverConfigJSON struct {
 	StateDir          string `json:"stateDir"`
 	Engine            string `json:"engine"`
 	NetworkBufferSize *int   `json:"networkBufferSize,omitempty"`
+	TrustProxyHeaders *bool  `json:"trustProxyHeaders,omitempty"`
+	CookieSecure      *bool  `json:"cookieSecure,omitempty"`
 }
 
 type browserConfigJSON struct {
 	ChromeVersion    string   `json:"version"`
 	ChromeBinary     string   `json:"binary"`
+	ChromeDebugPort  *int     `json:"remoteDebuggingPort,omitempty"`
 	ChromeExtraFlags string   `json:"extraFlags"`
 	ExtensionPaths   []string `json:"extensionPaths"`
 }
@@ -148,14 +164,22 @@ type profilesConfigJSON struct {
 }
 
 type securityConfigJSON struct {
-	AllowEvaluate   *bool          `json:"allowEvaluate"`
-	AllowMacro      *bool          `json:"allowMacro"`
-	AllowScreencast *bool          `json:"allowScreencast"`
-	AllowDownload   *bool          `json:"allowDownload"`
-	AllowUpload     *bool          `json:"allowUpload"`
-	MaxRedirects    *int           `json:"maxRedirects"`
-	Attach          attachJSON     `json:"attach"`
-	IDPI            idpiConfigJSON `json:"idpi"`
+	AllowEvaluate          *bool          `json:"allowEvaluate"`
+	AllowMacro             *bool          `json:"allowMacro"`
+	AllowScreencast        *bool          `json:"allowScreencast"`
+	AllowDownload          *bool          `json:"allowDownload"`
+	DownloadAllowedDomains []string       `json:"downloadAllowedDomains"`
+	DownloadMaxBytes       *int           `json:"downloadMaxBytes"`
+	AllowUpload            *bool          `json:"allowUpload"`
+	AllowClipboard         *bool          `json:"allowClipboard"`
+	UploadMaxRequestBytes  *int           `json:"uploadMaxRequestBytes"`
+	UploadMaxFiles         *int           `json:"uploadMaxFiles"`
+	UploadMaxFileBytes     *int           `json:"uploadMaxFileBytes"`
+	UploadMaxTotalBytes    *int           `json:"uploadMaxTotalBytes"`
+	MaxRedirects           *int           `json:"maxRedirects"`
+	TrustedProxyCIDRs      []string       `json:"trustedProxyCIDRs"`
+	Attach                 attachJSON     `json:"attach"`
+	IDPI                   idpiConfigJSON `json:"idpi"`
 }
 
 type attachJSON struct {
@@ -165,13 +189,14 @@ type attachJSON struct {
 }
 
 type idpiConfigJSON struct {
-	Enabled        bool     `json:"enabled"`
-	AllowedDomains []string `json:"allowedDomains"`
-	StrictMode     bool     `json:"strictMode"`
-	ScanContent    bool     `json:"scanContent"`
-	WrapContent    bool     `json:"wrapContent"`
-	CustomPatterns []string `json:"customPatterns"`
-	ScanTimeoutSec int      `json:"scanTimeoutSec"`
+	Enabled         bool     `json:"enabled"`
+	AllowedDomains  []string `json:"allowedDomains"`
+	StrictMode      bool     `json:"strictMode"`
+	ScanContent     bool     `json:"scanContent"`
+	WrapContent     bool     `json:"wrapContent"`
+	CustomPatterns  []string `json:"customPatterns"`
+	ScanTimeoutSec  int      `json:"scanTimeoutSec"`
+	ShieldThreshold int      `json:"shieldThreshold"`
 }
 
 type multiInstanceConfigJSON struct {
@@ -237,10 +262,13 @@ func (fc FileConfig) MarshalJSON() ([]byte, error) {
 			StateDir:          fc.Server.StateDir,
 			Engine:            fc.Server.Engine,
 			NetworkBufferSize: fc.Server.NetworkBufferSize,
+			TrustProxyHeaders: fc.Server.TrustProxyHeaders,
+			CookieSecure:      fc.Server.CookieSecure,
 		},
 		Browser: browserConfigJSON{
 			ChromeVersion:    fc.Browser.ChromeVersion,
 			ChromeBinary:     fc.Browser.ChromeBinary,
+			ChromeDebugPort:  fc.Browser.ChromeDebugPort,
 			ChromeExtraFlags: fc.Browser.ChromeExtraFlags,
 			ExtensionPaths:   copyStringSlice(fc.Browser.ExtensionPaths),
 		},
@@ -259,25 +287,34 @@ func (fc FileConfig) MarshalJSON() ([]byte, error) {
 			TabEvictionPolicy: fc.InstanceDefaults.TabEvictionPolicy,
 		},
 		Security: securityConfigJSON{
-			AllowEvaluate:   fc.Security.AllowEvaluate,
-			AllowMacro:      fc.Security.AllowMacro,
-			AllowScreencast: fc.Security.AllowScreencast,
-			AllowDownload:   fc.Security.AllowDownload,
-			AllowUpload:     fc.Security.AllowUpload,
-			MaxRedirects:    fc.Security.MaxRedirects,
+			AllowEvaluate:          fc.Security.AllowEvaluate,
+			AllowMacro:             fc.Security.AllowMacro,
+			AllowScreencast:        fc.Security.AllowScreencast,
+			AllowDownload:          fc.Security.AllowDownload,
+			DownloadAllowedDomains: copyStringSlice(fc.Security.DownloadAllowedDomains),
+			DownloadMaxBytes:       fc.Security.DownloadMaxBytes,
+			AllowUpload:            fc.Security.AllowUpload,
+			AllowClipboard:         fc.Security.AllowClipboard,
+			UploadMaxRequestBytes:  fc.Security.UploadMaxRequestBytes,
+			UploadMaxFiles:         fc.Security.UploadMaxFiles,
+			UploadMaxFileBytes:     fc.Security.UploadMaxFileBytes,
+			UploadMaxTotalBytes:    fc.Security.UploadMaxTotalBytes,
+			MaxRedirects:           fc.Security.MaxRedirects,
+			TrustedProxyCIDRs:      copyStringSlice(fc.Security.TrustedProxyCIDRs),
 			Attach: attachJSON{
 				Enabled:      fc.Security.Attach.Enabled,
 				AllowHosts:   copyStringSlice(fc.Security.Attach.AllowHosts),
 				AllowSchemes: copyStringSlice(fc.Security.Attach.AllowSchemes),
 			},
 			IDPI: idpiConfigJSON{
-				Enabled:        fc.Security.IDPI.Enabled,
-				AllowedDomains: copyStringSlice(fc.Security.IDPI.AllowedDomains),
-				StrictMode:     fc.Security.IDPI.StrictMode,
-				ScanContent:    fc.Security.IDPI.ScanContent,
-				WrapContent:    fc.Security.IDPI.WrapContent,
-				CustomPatterns: copyStringSlice(fc.Security.IDPI.CustomPatterns),
-				ScanTimeoutSec: fc.Security.IDPI.ScanTimeoutSec,
+				Enabled:         fc.Security.IDPI.Enabled,
+				AllowedDomains:  copyStringSlice(fc.Security.IDPI.AllowedDomains),
+				StrictMode:      fc.Security.IDPI.StrictMode,
+				ScanContent:     fc.Security.IDPI.ScanContent,
+				WrapContent:     fc.Security.IDPI.WrapContent,
+				CustomPatterns:  copyStringSlice(fc.Security.IDPI.CustomPatterns),
+				ScanTimeoutSec:  fc.Security.IDPI.ScanTimeoutSec,
+				ShieldThreshold: fc.Security.IDPI.ShieldThreshold,
 			},
 		},
 		Profiles: profilesConfigJSON{
@@ -340,7 +377,14 @@ func FileConfigFromRuntime(cfg *RuntimeConfig) FileConfig {
 	allowMacro := cfg.AllowMacro
 	allowScreencast := cfg.AllowScreencast
 	allowDownload := cfg.AllowDownload
+	downloadAllowedDomains := copyStringSlice(cfg.DownloadAllowedDomains)
+	downloadMaxBytes := cfg.EffectiveDownloadMaxBytes()
 	allowUpload := cfg.AllowUpload
+	allowClipboard := cfg.AllowClipboard
+	uploadMaxRequestBytes := cfg.EffectiveUploadMaxRequestBytes()
+	uploadMaxFiles := cfg.EffectiveUploadMaxFiles()
+	uploadMaxFileBytes := cfg.EffectiveUploadMaxFileBytes()
+	uploadMaxTotalBytes := cfg.EffectiveUploadMaxTotalBytes()
 	maxRedirects := cfg.MaxRedirects
 	attachEnabled := cfg.AttachEnabled
 	start := cfg.InstancePortStart
@@ -372,10 +416,13 @@ func FileConfigFromRuntime(cfg *RuntimeConfig) FileConfig {
 			StateDir:          cfg.StateDir,
 			Engine:            cfg.Engine,
 			NetworkBufferSize: netBufSize,
+			TrustProxyHeaders: &cfg.TrustProxyHeaders,
+			CookieSecure:      cfg.CookieSecure,
 		},
 		Browser: BrowserConfig{
 			ChromeVersion:    cfg.ChromeVersion,
 			ChromeBinary:     cfg.ChromeBinary,
+			ChromeDebugPort:  intPtrIfPositive(cfg.ChromeDebugPort),
 			ChromeExtraFlags: cfg.ChromeExtraFlags,
 			ExtensionPaths:   append([]string(nil), cfg.ExtensionPaths...),
 		},
@@ -394,12 +441,20 @@ func FileConfigFromRuntime(cfg *RuntimeConfig) FileConfig {
 			TabEvictionPolicy: cfg.TabEvictionPolicy,
 		},
 		Security: SecurityConfig{
-			AllowEvaluate:   &allowEvaluate,
-			AllowMacro:      &allowMacro,
-			AllowScreencast: &allowScreencast,
-			AllowDownload:   &allowDownload,
-			AllowUpload:     &allowUpload,
-			MaxRedirects:    &maxRedirects,
+			AllowEvaluate:          &allowEvaluate,
+			AllowMacro:             &allowMacro,
+			AllowScreencast:        &allowScreencast,
+			AllowDownload:          &allowDownload,
+			DownloadAllowedDomains: downloadAllowedDomains,
+			DownloadMaxBytes:       &downloadMaxBytes,
+			AllowUpload:            &allowUpload,
+			AllowClipboard:         &allowClipboard,
+			UploadMaxRequestBytes:  &uploadMaxRequestBytes,
+			UploadMaxFiles:         &uploadMaxFiles,
+			UploadMaxFileBytes:     &uploadMaxFileBytes,
+			UploadMaxTotalBytes:    &uploadMaxTotalBytes,
+			MaxRedirects:           &maxRedirects,
+			TrustedProxyCIDRs:      append([]string(nil), cfg.TrustedProxyCIDRs...),
 			Attach: AttachConfig{
 				Enabled:      &attachEnabled,
 				AllowHosts:   append([]string(nil), cfg.AttachAllowHosts...),
@@ -441,6 +496,14 @@ func FileConfigFromRuntime(cfg *RuntimeConfig) FileConfig {
 	return fc
 }
 
+func intPtrIfPositive(v int) *int {
+	if v <= 0 {
+		return nil
+	}
+	n := v
+	return &n
+}
+
 // legacyFileConfig is the old flat structure for backward compatibility.
 type legacyFileConfig struct {
 	Port              string `json:"port"`
@@ -452,6 +515,7 @@ type legacyFileConfig struct {
 	AllowScreencast   *bool  `json:"allowScreencast,omitempty"`
 	AllowDownload     *bool  `json:"allowDownload,omitempty"`
 	AllowUpload       *bool  `json:"allowUpload,omitempty"`
+	AllowClipboard    *bool  `json:"allowClipboard,omitempty"`
 	StateDir          string `json:"stateDir"`
 	ProfileDir        string `json:"profileDir"`
 	Headless          *bool  `json:"headless,omitempty"`
@@ -496,6 +560,7 @@ func convertLegacyConfig(lc *legacyFileConfig) *FileConfig {
 	fc.Security.AllowScreencast = lc.AllowScreencast
 	fc.Security.AllowDownload = lc.AllowDownload
 	fc.Security.AllowUpload = lc.AllowUpload
+	fc.Security.AllowClipboard = lc.AllowClipboard
 
 	// Timeouts
 	fc.Timeouts.ActionSec = lc.TimeoutSec

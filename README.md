@@ -5,7 +5,7 @@
 <p align="center">
   <strong>PinchTab</strong><br/>
   <strong>Browser control for AI agents</strong><br/>
-  12MB Go binary • HTTP API • Token-efficient
+  Small Go binary • HTTP API • Token-efficient
 </p>
 
 
@@ -16,7 +16,7 @@
     </td>
     <td align="left" valign="middle">
       <a href="https://github.com/pinchtab/pinchtab/releases/latest"><img src="https://img.shields.io/github/v/release/pinchtab/pinchtab?style=flat-square&color=FFD700" alt="Release"/></a><br/>
-      <a href="https://github.com/pinchtab/pinchtab/actions/workflows/go-verify.yml"><img src="https://img.shields.io/github/actions/workflow/status/pinchtab/pinchtab/go-verify.yml?branch=main&style=flat-square&label=Build" alt="Build"/></a><br/>
+      <a href="https://github.com/pinchtab/pinchtab/actions/workflows/ci-go.yml"><img src="https://img.shields.io/github/actions/workflow/status/pinchtab/pinchtab/ci-go.yml?branch=main&style=flat-square&label=Go%20CI" alt="Go CI"/></a><br/>
       <img src="https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat-square&logo=go&logoColor=white" alt="Go 1.25+"/><br/>
       <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue?style=flat-square" alt="License"/></a>
     </td>
@@ -38,6 +38,13 @@ pinchtab daemon install
 ```
 
 This installs the control-plane server and starts a default headless Chrome instance, ready to accept requests from agents or manual API calls.
+
+PinchTab is designed first for local, single-user control on a machine you manage. Remote and distributed layouts are supported, but they are advanced operator-managed deployments. If you bind beyond loopback, publish ports, or attach remote bridges, you are responsible for tokens, network boundaries, TLS or reverse proxying, and which endpoint families you expose.
+
+If you run PinchTab on a different machine, do it only when you understand the security model. Keep it on a private or otherwise closed network, avoid exposing it directly to the public internet, and keep high-risk endpoint families disabled unless you explicitly need them. If you do enable them, lock them down so only the systems that need them can reach them.
+
+> [!WARNING]
+> The dashboard, HTTP API, MCP server, and remote CLI integrations are privileged operator control surfaces. They are not designed for untrusted users, multi-tenant exposure, or direct public-internet access. If you are unsure how to secure a non-local deployment, review [docs/guides/security.md](docs/guides/security.md) and use the private security contact path in [SECURITY.md](SECURITY.md) before exposing the service.
 
 
 If you prefer not to run a daemon, or if you're on Windows, you can instead run:
@@ -62,8 +69,12 @@ PinchTab defaults to a **local-first security posture**:
 > By default, IDPI restricts browsing to **locally hosted websites only**.
 > This prevents agents from navigating the public internet until you explicitly allow it.
 > The restriction exists to make the security implications of browser automation clear before enabling wider access.
+>
+> Expanding browsing to non-local or non-trusted websites is a security-reducing choice. Hostile pages can still increase browser attack surface and interact badly with enabled automation features even when PinchTab's content defenses are on.
 
 See the full guide: [docs/guides/security.md](docs/guides/security.md)
+
+Remote, container, and distributed setups are possible, but PinchTab is not positioned as a turnkey internet-facing browser service. Treat any non-local deployment as an advanced setup that you must secure explicitly.
 
 ## What can you use it for
 
@@ -165,6 +176,12 @@ brew install pinchtab/tap/pinchtab
 npm install -g pinchtab
 ```
 
+### Platform Support
+
+PinchTab's primary tested operator workflow is local macOS and Linux.
+
+Windows binaries are published, but Windows support is currently limited and best-effort because the project does not have the same level of automated and manual coverage there. On Windows, prefer running `pinchtab server` or `pinchtab bridge` directly instead of relying on the daemon workflow.
+
 ### Shell Completion
 
 Generate and install shell completions after `pinchtab` is on your `PATH`:
@@ -236,10 +253,15 @@ pinchtab text
 
 Or use the HTTP API directly:
 ```bash
-# Create an instance (returns instance id)
-INST=$(curl -s -X POST http://localhost:9867/instances/launch \
+# Create a profile first (returns profile id)
+PROF=$(curl -s -X POST http://localhost:9867/profiles \
   -H "Content-Type: application/json" \
-  -d '{"name":"work","mode":"headless"}' | jq -r '.id')
+  -d '{"name":"work"}' | jq -r '.id')
+
+# Start an instance for that profile (returns instance id)
+INST=$(curl -s -X POST http://localhost:9867/instances/start \
+  -H "Content-Type: application/json" \
+  -d "{\"profileId\":\"$PROF\",\"mode\":\"headless\"}" | jq -r '.id')
 
 # Open a tab in that instance
 TAB=$(curl -s -X POST http://localhost:9867/instances/$INST/tabs/open \
@@ -290,7 +312,7 @@ Read more in the [Core Concepts](https://pinchtab.com/docs/core-concepts) guide.
 
 ## Privacy
 
-PinchTab is a fully open-source, local-only tool. No telemetry, no analytics, no outbound connections. The binary binds to `127.0.0.1` by default. Persistent profiles store browser sessions locally on your machine — similar to how a human reuses their browser. The single Go binary (~16 MB) is fully verifiable: build from source at [github.com/pinchtab/pinchtab](https://github.com/pinchtab/pinchtab).
+PinchTab is a fully open-source, local-first tool. No telemetry, no analytics, and no required outbound service dependency. The binary binds to `127.0.0.1` by default. Persistent profiles store browser sessions locally on your machine, similar to how a human reuses their browser. Remote and distributed deployments are available for advanced use cases, but they are explicit operator-managed setups rather than the default posture. The single Go binary (~16 MB) is fully verifiable: build from source at [github.com/pinchtab/pinchtab](https://github.com/pinchtab/pinchtab).
 
 ---
 

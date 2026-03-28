@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,13 +17,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pinchtab/pinchtab/internal/allocation"
 	"github.com/pinchtab/pinchtab/internal/api/types"
 	"github.com/pinchtab/pinchtab/internal/bridge"
 	"github.com/pinchtab/pinchtab/internal/config"
-	"github.com/pinchtab/pinchtab/internal/idutil"
+	"github.com/pinchtab/pinchtab/internal/ids"
 	"github.com/pinchtab/pinchtab/internal/instance"
 	"github.com/pinchtab/pinchtab/internal/profiles"
+	internalurls "github.com/pinchtab/pinchtab/internal/urls"
 )
 
 // InstanceEvent is emitted when instance state changes.
@@ -45,7 +46,7 @@ type Orchestrator struct {
 	childAuthToken string
 	allowEvaluate  bool
 	portAllocator  *PortAllocator
-	idMgr          *idutil.Manager
+	idMgr          *ids.Manager
 	eventHandlers  []EventHandler
 	instanceMgr    *instance.Manager
 	runtimeCfg     *config.RuntimeConfig
@@ -82,6 +83,7 @@ type InstanceInternal struct {
 	Error string
 
 	authToken string
+	cdpPort   int
 	cmd       Cmd
 	logBuf    *ringBuffer
 }
@@ -135,15 +137,13 @@ func NewOrchestratorWithRunner(baseDir string, runner HostRunner) *Orchestrator 
 		childAuthToken: "",
 		allowEvaluate:  false,
 		portAllocator:  NewPortAllocator(9868, 9968),
-		idMgr:          idutil.NewManager(),
+		idMgr:          ids.NewManager(),
 	}
 
 	bridgeClient := instance.NewBridgeClient()
-	defaultPolicy, _ := allocation.New("fcfs")
 	orch.instanceMgr = instance.NewManager(
 		&orchestratorLauncher{orch: orch},
 		bridgeClient,
-		defaultPolicy,
 	)
 
 	return orch
@@ -156,12 +156,7 @@ func (o *Orchestrator) InstanceManager() *instance.Manager {
 
 // SetAllocationPolicy changes the allocation policy at runtime.
 func (o *Orchestrator) SetAllocationPolicy(name string) error {
-	p, err := allocation.New(name)
-	if err != nil {
-		return err
-	}
-	o.instanceMgr.Allocator.SetPolicy(p)
-	return nil
+	return o.instanceMgr.SetAllocationPolicy(name)
 }
 
 type orchestratorLauncher struct {
@@ -250,6 +245,13 @@ func (o *Orchestrator) Launch(name, port string, headless bool, extensionPaths [
 	if err := profiles.ValidateProfileName(name); err != nil {
 		return nil, err
 	}
+	reservedPorts := make([]int, 0, 2)
+	defer func() {
+		for _, reserved := range reservedPorts {
+			o.portAllocator.ReleasePort(reserved)
+		}
+	}()
+
 	o.mu.Lock()
 
 	if port == "" || port == "0" {
@@ -259,6 +261,21 @@ func (o *Orchestrator) Launch(name, port string, headless bool, extensionPaths [
 			return nil, fmt.Errorf("failed to allocate port: %w", err)
 		}
 		port = fmt.Sprintf("%d", allocatedPort)
+		reservedPorts = append(reservedPorts, allocatedPort)
+		o.mu.Lock()
+	} else {
+		o.mu.Unlock()
+		portInt, err := parsePortNumber(port)
+		if err != nil {
+			return nil, err
+		}
+		port = strconv.Itoa(portInt)
+		if err := o.portAllocator.ReservePort(portInt); err != nil {
+			return nil, fmt.Errorf("failed to reserve port %s: %w", port, err)
+		}
+		if portInt >= o.portAllocator.start && portInt <= o.portAllocator.end {
+			reservedPorts = append(reservedPorts, portInt)
+		}
 		o.mu.Lock()
 	}
 
@@ -287,6 +304,12 @@ func (o *Orchestrator) Launch(name, port string, headless bool, extensionPaths [
 
 	o.mu.Unlock()
 
+	cdpPort, err := o.portAllocator.AllocatePort()
+	if err != nil {
+		return nil, fmt.Errorf("failed to allocate chrome debug port: %w", err)
+	}
+	reservedPorts = append(reservedPorts, cdpPort)
+
 	profilePath := filepath.Join(o.baseDir, name)
 	if o.profiles != nil {
 		if resolvedPath, err := o.profiles.ProfilePath(name); err == nil {
@@ -301,7 +324,7 @@ func (o *Orchestrator) Launch(name, port string, headless bool, extensionPaths [
 		return nil, fmt.Errorf("create state dir: %w", err)
 	}
 
-	childConfigPath, err := o.writeChildConfig(port, profilePath, instanceStateDir, headless, extensionPaths)
+	childConfigPath, err := o.writeChildConfig(port, cdpPort, profilePath, instanceStateDir, headless, extensionPaths)
 	if err != nil {
 		return nil, fmt.Errorf("write child config: %w", err)
 	}
@@ -331,24 +354,27 @@ func (o *Orchestrator) Launch(name, port string, headless bool, extensionPaths [
 			Status:      "starting",
 			StartTime:   time.Now(),
 		},
-		URL:    fmt.Sprintf("http://localhost:%s", port),
-		cmd:    cmd,
-		logBuf: logBuf,
+		URL:     fmt.Sprintf("http://localhost:%s", port),
+		cdpPort: cdpPort,
+		cmd:     cmd,
+		logBuf:  logBuf,
 	}
 
 	o.mu.Lock()
 	o.instances[instanceID] = inst
 	o.mu.Unlock()
+	reservedPorts = nil
 
 	go o.monitor(inst)
 
 	return &inst.Instance, nil
 }
 
-func (o *Orchestrator) writeChildConfig(port, profilePath, instanceStateDir string, headless bool, extensionPaths []string) (string, error) {
+func (o *Orchestrator) writeChildConfig(port string, cdpPort int, profilePath, instanceStateDir string, headless bool, extensionPaths []string) (string, error) {
 	fc := config.FileConfigFromRuntime(o.runtimeCfg)
 	fc.Server.Port = port
 	fc.Server.StateDir = instanceStateDir
+	fc.Browser.ChromeDebugPort = intPtr(cdpPort)
 	fc.Profiles.BaseDir = filepath.Dir(profilePath)
 	fc.Profiles.DefaultProfile = filepath.Base(profilePath)
 	if headless {
@@ -356,8 +382,6 @@ func (o *Orchestrator) writeChildConfig(port, profilePath, instanceStateDir stri
 	} else {
 		fc.InstanceDefaults.Mode = "headed"
 	}
-	noRestore := true
-	fc.InstanceDefaults.NoRestore = &noRestore
 
 	if len(extensionPaths) > 0 {
 		seen := make(map[string]bool)
@@ -388,12 +412,39 @@ func (o *Orchestrator) writeChildConfig(port, profilePath, instanceStateDir stri
 	return configPath, nil
 }
 
-func (o *Orchestrator) attachExternalInstance(name string, inst bridge.Instance, authToken string) (*bridge.Instance, error) {
+func intPtr(v int) *int {
+	if v <= 0 {
+		return nil
+	}
+	n := v
+	return &n
+}
+
+// attachExternalInstance registers an external instance or updates an existing
+// bridge in place (upsert). Non-bridge duplicates still return an error.
+func (o *Orchestrator) attachExternalInstance(name string, inst bridge.Instance, authToken string) (*bridge.Instance, bool, error) {
 	o.mu.Lock()
-	for _, inst := range o.instances {
-		if inst.ProfileName == name && instanceIsActive(inst) {
+	for _, existing := range o.instances {
+		if existing.ProfileName == name && instanceIsActive(existing) {
+			if existing.Attached && inst.AttachType == "bridge" && existing.AttachType == "bridge" {
+				if existing.authToken != "" && subtle.ConstantTimeCompare([]byte(existing.authToken), []byte(authToken)) != 1 {
+					o.mu.Unlock()
+					return nil, false, fmt.Errorf("bridge %q already attached: token mismatch", name)
+				}
+				existing.URL = inst.URL
+				existing.Instance.URL = inst.URL
+				existing.authToken = authToken
+				existing.Status = "running"
+				existing.Error = ""
+				existing.StartTime = time.Now()
+				result := existing.Instance
+				o.mu.Unlock()
+
+				o.syncInstanceToManager(&result)
+				return &result, false, nil
+			}
 			o.mu.Unlock()
-			return nil, fmt.Errorf("instance with name %q already exists", name)
+			return nil, false, fmt.Errorf("instance with name %q already exists", name)
 		}
 	}
 	o.mu.Unlock()
@@ -416,14 +467,14 @@ func (o *Orchestrator) attachExternalInstance(name string, inst bridge.Instance,
 	o.mu.Unlock()
 
 	o.syncInstanceToManager(&internal.Instance)
-	return &internal.Instance, nil
+	return &internal.Instance, true, nil
 }
 
 // Attach connects to an externally managed Chrome instance via CDP URL.
 // Unlike Launch, this does not start a Chrome process - it only registers
 // the external instance for tracking and proxying.
 func (o *Orchestrator) Attach(name, cdpURL string) (*bridge.Instance, error) {
-	inst, err := o.attachExternalInstance(name, bridge.Instance{
+	inst, _, err := o.attachExternalInstance(name, bridge.Instance{
 		Attached:   true,
 		AttachType: "cdp",
 		CdpURL:     cdpURL,
@@ -433,7 +484,7 @@ func (o *Orchestrator) Attach(name, cdpURL string) (*bridge.Instance, error) {
 		return nil, err
 	}
 
-	slog.Info("attached to external Chrome", "id", inst.ID, "name", name, "cdpUrl", cdpURL)
+	slog.Info("attached to external Chrome", "id", inst.ID, "name", name, "cdpUrl", internalurls.RedactForLog(cdpURL))
 
 	// Emit event
 	o.emitEvent("instance.attached", inst)
@@ -441,19 +492,34 @@ func (o *Orchestrator) Attach(name, cdpURL string) (*bridge.Instance, error) {
 }
 
 // AttachBridge registers an already-running bridge server as an attached instance.
-func (o *Orchestrator) AttachBridge(name, baseURL, token string) (*bridge.Instance, error) {
-	inst, err := o.attachExternalInstance(name, bridge.Instance{
-		Attached:   true,
-		AttachType: "bridge",
-		URL:        strings.TrimRight(baseURL, "/"),
-	}, token)
-	if err != nil {
-		return nil, err
+// If a bridge with the same name is already attached, it is updated in place (upsert)
+// provided the caller presents the current bridge token.
+func (o *Orchestrator) AttachBridge(name, baseURL, token string) (*bridge.Instance, bool, error) {
+	normalizedBaseURL := strings.TrimRight(baseURL, "/")
+	if parsed, err := url.Parse(normalizedBaseURL); err == nil && parsed.Scheme != "" && parsed.Host != "" {
+		normalizedBaseURL = parsed.Scheme + "://" + parsed.Host
 	}
 
-	slog.Info("attached to external bridge", "id", inst.ID, "name", name, "url", inst.URL)
+	inst, created, err := o.attachExternalInstance(name, bridge.Instance{
+		Attached:   true,
+		AttachType: "bridge",
+		URL:        normalizedBaseURL,
+	}, token)
+	if err != nil {
+		return nil, false, err
+	}
+
+	slog.Info("attached to external bridge", "id", inst.ID, "name", name, "url", internalurls.RedactForLog(inst.URL))
 	o.emitEvent("instance.attached", inst)
-	return inst, nil
+	if created {
+		o.mu.RLock()
+		internal := o.instances[inst.ID]
+		o.mu.RUnlock()
+		if internal != nil {
+			go o.monitorAttachedBridge(internal)
+		}
+	}
+	return inst, created, nil
 }
 
 func (o *Orchestrator) Stop(id string) error {
@@ -573,6 +639,10 @@ func (o *Orchestrator) markStopped(id string) {
 	if portInt, err := strconv.Atoi(portStr); err == nil {
 		o.portAllocator.ReleasePort(portInt)
 		slog.Debug("released port", "id", id, "port", portStr)
+	}
+	if inst.cdpPort > 0 {
+		o.portAllocator.ReleasePort(inst.cdpPort)
+		slog.Debug("released chrome debug port", "id", id, "port", inst.cdpPort)
 	}
 
 	profileName := inst.ProfileName

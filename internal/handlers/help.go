@@ -3,12 +3,12 @@ package handlers
 import (
 	"net/http"
 
-	"github.com/pinchtab/pinchtab/internal/web"
+	"github.com/pinchtab/pinchtab/internal/httpx"
 )
 
 func (h *Handlers) HandleHelp(wr http.ResponseWriter, _ *http.Request) {
 	security := h.endpointSecurityStates()
-	web.JSON(wr, 200, map[string]any{
+	httpx.JSON(wr, 200, map[string]any{
 		"name": "pinchtab",
 		"endpoints": map[string]any{
 			"GET /health":              "health status",
@@ -22,6 +22,10 @@ func (h *Handlers) HandleHelp(wr http.ResponseWriter, _ *http.Request) {
 			"POST|GET /action":         "run a single action (JSON body or query params)",
 			"POST /actions":            "run multiple actions",
 			"GET /snapshot":            "accessibility snapshot",
+			"GET /console":             "view browser console logs (supports tabId, limit)",
+			"POST /console/clear":      "clear console logs for a tab",
+			"GET /errors":              "view browser uncaught errors (supports tabId, limit)",
+			"POST /errors/clear":       "clear error logs for a tab",
 			"POST /evaluate":           endpointStatusSummary(security["evaluate"], "run JavaScript in the current tab"),
 			"POST /tabs/{id}/evaluate": endpointStatusSummary(security["evaluate"], "run JavaScript in a specific tab"),
 			"POST /macro":              endpointStatusSummary(security["macro"], "run macro steps with single request"),
@@ -31,11 +35,16 @@ func (h *Handlers) HandleHelp(wr http.ResponseWriter, _ *http.Request) {
 			"POST /tabs/{id}/upload":   endpointStatusSummary(security["upload"], "set files on a file input in a specific tab"),
 			"GET /screencast":          endpointStatusSummary(security["screencast"], "stream live tab frames"),
 			"GET /screencast/tabs":     endpointStatusSummary(security["screencast"], "list tabs available for live capture"),
+			"GET /clipboard/read":      endpointStatusSummary(security["clipboard"], "read shared server clipboard text (not tab-scoped)"),
+			"POST /clipboard/write":    endpointStatusSummary(security["clipboard"], "write shared server clipboard text (body: {text})"),
+			"POST /clipboard/copy":     endpointStatusSummary(security["clipboard"], "alias for clipboard write"),
+			"GET /clipboard/paste":     endpointStatusSummary(security["clipboard"], "read shared server clipboard text (alias for read)"),
 		},
 		"security": security,
 		"notes": []string{
 			"Use Authorization: Bearer <token> when auth is enabled.",
 			"Prefer /text with maxChars for token-efficient reads.",
+			"Clipboard endpoints operate on shared server-side state and do not accept tabId.",
 		},
 	})
 }

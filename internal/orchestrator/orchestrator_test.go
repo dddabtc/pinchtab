@@ -2,8 +2,12 @@ package orchestrator
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -11,10 +15,31 @@ import (
 	"github.com/pinchtab/pinchtab/internal/config"
 )
 
+func envMap(items []string) map[string]string {
+	out := make(map[string]string, len(items))
+	for _, item := range items {
+		key, value, ok := strings.Cut(item, "=")
+		if ok {
+			out[key] = value
+		}
+	}
+	return out
+}
+
+func stubPortAvailability(t *testing.T, fn func(int) bool) {
+	t.Helper()
+	old := portAvailableFunc
+	portAvailableFunc = fn
+	t.Cleanup(func() {
+		portAvailableFunc = old
+	})
+}
+
 func TestOrchestrator_Launch_Lifecycle(t *testing.T) {
 	old := processAliveFunc
 	processAliveFunc = func(pid int) bool { return pid > 0 }
 	defer func() { processAliveFunc = old }()
+	stubPortAvailability(t, func(int) bool { return true })
 
 	runner := &mockRunner{portAvail: true}
 	o := NewOrchestratorWithRunner(t.TempDir(), runner)
@@ -44,6 +69,7 @@ func TestOrchestrator_ListAndStop(t *testing.T) {
 	old := processAliveFunc
 	processAliveFunc = func(pid int) bool { return alive }
 	defer func() { processAliveFunc = old }()
+	stubPortAvailability(t, func(int) bool { return true })
 
 	runner := &mockRunner{portAvail: true}
 	o := NewOrchestratorWithRunner(t.TempDir(), runner)
@@ -107,6 +133,7 @@ func TestOrchestrator_Launch_RejectsPathTraversal(t *testing.T) {
 	old := processAliveFunc
 	processAliveFunc = func(pid int) bool { return pid > 0 }
 	defer func() { processAliveFunc = old }()
+	stubPortAvailability(t, func(int) bool { return true })
 
 	runner := &mockRunner{portAvail: true}
 	o := NewOrchestratorWithRunner(t.TempDir(), runner)
@@ -123,6 +150,8 @@ func TestOrchestrator_Launch_RejectsPathTraversal(t *testing.T) {
 		{"backslash", "test\\nested", "cannot contain '/'"},
 		{"empty name", "", "cannot be empty"},
 		{"absolute path attempt", "../../../etc/passwd", "cannot contain"},
+		{"powershell metacharacter", "poc';calc", "contains invalid character"},
+		{"reserved windows device name", "CON", "reserved device name"},
 	}
 
 	for _, tt := range badNames {
@@ -143,6 +172,7 @@ func TestOrchestrator_Launch_AcceptsValidNames(t *testing.T) {
 	old := processAliveFunc
 	processAliveFunc = func(pid int) bool { return pid > 0 }
 	defer func() { processAliveFunc = old }()
+	stubPortAvailability(t, func(int) bool { return true })
 
 	runner := &mockRunner{portAvail: true}
 	o := NewOrchestratorWithRunner(t.TempDir(), runner)
@@ -152,6 +182,7 @@ func TestOrchestrator_Launch_AcceptsValidNames(t *testing.T) {
 		"with-dash",
 		"with_underscore",
 		"with.dot",
+		"Work Profile",
 		"CamelCase",
 		"123numeric",
 		"a",
@@ -160,7 +191,7 @@ func TestOrchestrator_Launch_AcceptsValidNames(t *testing.T) {
 	for i, name := range validNames {
 		t.Run(name, func(t *testing.T) {
 			port := 9100 + i
-			inst, err := o.Launch(name, string(rune('0'+port%10))+string(rune('0'+(port/10)%10))+string(rune('0'+(port/100)%10))+string(rune('0'+(port/1000)%10)), true, nil)
+			inst, err := o.Launch(name, strconv.Itoa(port), true, nil)
 			if err != nil {
 				t.Errorf("Launch(%q) unexpected error: %v", name, err)
 				return
@@ -169,6 +200,141 @@ func TestOrchestrator_Launch_AcceptsValidNames(t *testing.T) {
 				t.Errorf("Launch(%q) profileName = %q", name, inst.ProfileName)
 			}
 		})
+	}
+}
+
+func TestOrchestrator_Launch_RejectsInvalidPort(t *testing.T) {
+	runner := &mockRunner{portAvail: true}
+	o := NewOrchestratorWithRunner(t.TempDir(), runner)
+
+	for _, raw := range []string{"abc", "0x1234", "65536"} {
+		if _, err := o.Launch("profile1", raw, true, nil); err == nil {
+			t.Fatalf("Launch should reject invalid port %q", raw)
+		}
+	}
+}
+
+func TestOrchestrator_Launch_ReservesDistinctChromeDebugPort(t *testing.T) {
+	old := processAliveFunc
+	processAliveFunc = func(pid int) bool { return pid > 0 }
+	defer func() { processAliveFunc = old }()
+	stubPortAvailability(t, func(int) bool { return true })
+
+	runner := &mockRunner{portAvail: true}
+	o := NewOrchestratorWithRunner(t.TempDir(), runner)
+	o.ApplyRuntimeConfig(&config.RuntimeConfig{
+		Token:             "child-token",
+		InstancePortStart: 9900,
+		InstancePortEnd:   9903,
+	})
+
+	inst, err := o.Launch("profile1", "", true, nil)
+	if err != nil {
+		t.Fatalf("Launch failed: %v", err)
+	}
+
+	if inst.Port != "9900" {
+		t.Fatalf("bridge port = %s, want 9900", inst.Port)
+	}
+
+	cfgPath := envMap(runner.env)["PINCHTAB_CONFIG"]
+	if cfgPath == "" {
+		t.Fatal("PINCHTAB_CONFIG missing from child env")
+	}
+
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%q) error = %v", cfgPath, err)
+	}
+
+	var fc config.FileConfig
+	if err := json.Unmarshal(data, &fc); err != nil {
+		t.Fatalf("Unmarshal child config error = %v", err)
+	}
+	if fc.Browser.ChromeDebugPort == nil {
+		t.Fatal("child config missing browser.remoteDebuggingPort")
+	}
+	if *fc.Browser.ChromeDebugPort != 9901 {
+		t.Fatalf("chrome debug port = %d, want 9901", *fc.Browser.ChromeDebugPort)
+	}
+	if *fc.Browser.ChromeDebugPort == 9900 {
+		t.Fatal("chrome debug port should differ from bridge port")
+	}
+
+	gotPorts := o.portAllocator.AllocatedPorts()
+	if len(gotPorts) != 2 {
+		t.Fatalf("allocated ports = %v, want 2 reserved ports", gotPorts)
+	}
+	if !o.portAllocator.IsAllocated(9900) || !o.portAllocator.IsAllocated(9901) {
+		t.Fatalf("expected ports 9900 and 9901 reserved, got %v", gotPorts)
+	}
+}
+
+func TestOrchestrator_Launch_ExplicitPortAlsoReservesDistinctChromeDebugPort(t *testing.T) {
+	old := processAliveFunc
+	processAliveFunc = func(pid int) bool { return pid > 0 }
+	defer func() { processAliveFunc = old }()
+	stubPortAvailability(t, func(int) bool { return true })
+
+	runner := &mockRunner{portAvail: true}
+	o := NewOrchestratorWithRunner(t.TempDir(), runner)
+	o.ApplyRuntimeConfig(&config.RuntimeConfig{
+		InstancePortStart: 9910,
+		InstancePortEnd:   9913,
+	})
+
+	inst, err := o.Launch("profile1", "9911", true, nil)
+	if err != nil {
+		t.Fatalf("Launch failed: %v", err)
+	}
+	if inst.Port != "9911" {
+		t.Fatalf("bridge port = %s, want 9911", inst.Port)
+	}
+
+	cfgPath := envMap(runner.env)["PINCHTAB_CONFIG"]
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%q) error = %v", cfgPath, err)
+	}
+
+	var fc config.FileConfig
+	if err := json.Unmarshal(data, &fc); err != nil {
+		t.Fatalf("Unmarshal child config error = %v", err)
+	}
+	if fc.Browser.ChromeDebugPort == nil {
+		t.Fatal("child config missing browser.remoteDebuggingPort")
+	}
+	if *fc.Browser.ChromeDebugPort == 9911 {
+		t.Fatalf("chrome debug port = %d, must differ from bridge port", *fc.Browser.ChromeDebugPort)
+	}
+	if !o.portAllocator.IsAllocated(9911) {
+		t.Fatal("explicit bridge port should remain reserved in allocator while instance is active")
+	}
+}
+
+func TestOrchestrator_Stop_ReleasesBridgeAndChromeDebugPorts(t *testing.T) {
+	old := processAliveFunc
+	processAliveFunc = func(pid int) bool { return false }
+	defer func() { processAliveFunc = old }()
+	stubPortAvailability(t, func(int) bool { return true })
+
+	runner := &mockRunner{portAvail: true}
+	o := NewOrchestratorWithRunner(t.TempDir(), runner)
+	o.ApplyRuntimeConfig(&config.RuntimeConfig{
+		InstancePortStart: 9920,
+		InstancePortEnd:   9923,
+	})
+
+	inst, err := o.Launch("profile1", "", true, nil)
+	if err != nil {
+		t.Fatalf("Launch failed: %v", err)
+	}
+
+	if err := o.Stop(inst.ID); err != nil {
+		t.Fatalf("Stop failed: %v", err)
+	}
+	if got := o.portAllocator.AllocatedPorts(); len(got) != 0 {
+		t.Fatalf("allocated ports after stop = %v, want none", got)
 	}
 }
 
@@ -238,9 +404,12 @@ func TestOrchestrator_AttachBridge(t *testing.T) {
 	runner := &mockRunner{portAvail: true}
 	o := NewOrchestratorWithRunner(t.TempDir(), runner)
 
-	inst, err := o.AttachBridge("bridge1", "http://10.0.0.8:9868", "bridge-token")
+	inst, created, err := o.AttachBridge("bridge1", "http://10.0.0.8:9868", "bridge-token")
 	if err != nil {
 		t.Fatalf("AttachBridge failed: %v", err)
+	}
+	if !created {
+		t.Fatal("expected new bridge to be created")
 	}
 	if !inst.Attached {
 		t.Fatal("expected attached instance")
@@ -253,6 +422,114 @@ func TestOrchestrator_AttachBridge(t *testing.T) {
 	}
 	if inst.CdpURL != "" {
 		t.Fatalf("CdpURL = %q, want empty", inst.CdpURL)
+	}
+}
+
+func TestOrchestrator_AttachBridge_UpsertsExistingBridge(t *testing.T) {
+	runner := &mockRunner{portAvail: true}
+	o := NewOrchestratorWithRunner(t.TempDir(), runner)
+
+	first, _, err := o.AttachBridge("bridge1", "http://10.0.0.8:9868", "bridge-token-1")
+	if err != nil {
+		t.Fatalf("first AttachBridge failed: %v", err)
+	}
+
+	// Same token → upsert succeeds
+	second, created, err := o.AttachBridge("bridge1", "http://10.0.0.9:9868", "bridge-token-1")
+	if err != nil {
+		t.Fatalf("second AttachBridge failed: %v", err)
+	}
+	if created {
+		t.Fatal("expected upsert, not create")
+	}
+
+	if second.ID != first.ID {
+		t.Fatalf("ID = %q, want %q", second.ID, first.ID)
+	}
+	if second.URL != "http://10.0.0.9:9868" {
+		t.Fatalf("URL = %q, want %q", second.URL, "http://10.0.0.9:9868")
+	}
+
+	o.mu.RLock()
+	internal := o.instances[first.ID]
+	o.mu.RUnlock()
+	if internal == nil {
+		t.Fatalf("attached instance %q missing from orchestrator", first.ID)
+	}
+	if internal.authToken != "bridge-token-1" {
+		t.Fatalf("authToken = %q, want %q", internal.authToken, "bridge-token-1")
+	}
+
+	list := o.List()
+	if len(list) != 1 {
+		t.Fatalf("expected 1 instance in list, got %d", len(list))
+	}
+}
+
+func TestOrchestrator_AttachBridge_RejectsTokenMismatch(t *testing.T) {
+	runner := &mockRunner{portAvail: true}
+	o := NewOrchestratorWithRunner(t.TempDir(), runner)
+
+	_, _, err := o.AttachBridge("bridge1", "http://10.0.0.8:9868", "bridge-token-1")
+	if err != nil {
+		t.Fatalf("first AttachBridge failed: %v", err)
+	}
+
+	// Different token → rejected
+	_, _, err = o.AttachBridge("bridge1", "http://10.0.0.9:9868", "bridge-token-2")
+	if err == nil {
+		t.Fatal("expected error for token mismatch, got nil")
+	}
+	if !strings.Contains(err.Error(), "token mismatch") {
+		t.Fatalf("expected token mismatch error, got: %v", err)
+	}
+}
+
+func TestOrchestrator_AttachBridge_RemovesUnhealthyBridge(t *testing.T) {
+	unhealthy := false
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/health" {
+			t.Fatalf("path = %q, want /health", r.URL.Path)
+		}
+		if unhealthy {
+			http.Error(w, "unhealthy", http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	o := NewOrchestratorWithRunner(t.TempDir(), &mockRunner{portAvail: true})
+	o.client = backend.Client()
+	backendURL, err := url.Parse(backend.URL)
+	if err != nil {
+		t.Fatalf("parse backend URL: %v", err)
+	}
+	o.ApplyRuntimeConfig(&config.RuntimeConfig{
+		AttachEnabled:      true,
+		AttachAllowHosts:   []string{backendURL.Hostname()},
+		AttachAllowSchemes: []string{"http"},
+	})
+
+	inst, _, err := o.AttachBridge("bridge1", backend.URL, "bridge-token")
+	if err != nil {
+		t.Fatalf("AttachBridge failed: %v", err)
+	}
+
+	unhealthy = true
+
+	o.mu.RLock()
+	internal := o.instances[inst.ID]
+	o.mu.RUnlock()
+	if internal == nil {
+		t.Fatalf("attached instance %q missing from orchestrator", inst.ID)
+	}
+
+	if o.checkAttachedBridgeHealth(internal) {
+		t.Fatal("expected unhealthy attached bridge to stop monitoring")
+	}
+	if len(o.List()) != 0 {
+		t.Fatalf("expected attached bridge to be removed, got %d instances", len(o.List()))
 	}
 }
 
@@ -283,6 +560,74 @@ func TestValidateAttachURL_RejectsBridgeBaseURLWithPath(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "must not include a path") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateAttachURL_RejectsBridgeBaseURLWithUserinfo(t *testing.T) {
+	o := NewOrchestratorWithRunner(t.TempDir(), &mockRunner{portAvail: true})
+	o.ApplyRuntimeConfig(&config.RuntimeConfig{
+		AttachEnabled:      true,
+		AttachAllowHosts:   []string{"10.0.0.8"},
+		AttachAllowSchemes: []string{"http"},
+	})
+
+	err := o.validateAttachURL("http://user:pass@10.0.0.8:9868")
+	if err == nil {
+		t.Fatal("expected error for attach bridge URL with userinfo")
+	}
+	if !strings.Contains(err.Error(), "must not include userinfo") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateAttachURL_RejectsBridgeBaseURLWithQueryOrFragment(t *testing.T) {
+	o := NewOrchestratorWithRunner(t.TempDir(), &mockRunner{portAvail: true})
+	o.ApplyRuntimeConfig(&config.RuntimeConfig{
+		AttachEnabled:      true,
+		AttachAllowHosts:   []string{"10.0.0.8"},
+		AttachAllowSchemes: []string{"http"},
+	})
+
+	for _, raw := range []string{
+		"http://10.0.0.8:9868?token=secret",
+		"http://10.0.0.8:9868#debug",
+	} {
+		err := o.validateAttachURL(raw)
+		if err == nil {
+			t.Fatalf("expected error for attach bridge URL %q", raw)
+		}
+		if !strings.Contains(err.Error(), "must not include query or fragment") {
+			t.Fatalf("unexpected error for %q: %v", raw, err)
+		}
+	}
+}
+
+func TestOrchestrator_AttachBridge_NormalizesBaseURL(t *testing.T) {
+	runner := &mockRunner{portAvail: true}
+	o := NewOrchestratorWithRunner(t.TempDir(), runner)
+
+	inst, _, err := o.AttachBridge("bridge1", "http://10.0.0.8:9868/?debug=1#frag", "bridge-token")
+	if err != nil {
+		t.Fatalf("AttachBridge failed: %v", err)
+	}
+	if inst.URL != "http://10.0.0.8:9868" {
+		t.Fatalf("URL = %q, want %q", inst.URL, "http://10.0.0.8:9868")
+	}
+}
+
+func TestValidateAttachURL_WildcardHost(t *testing.T) {
+	o := NewOrchestratorWithRunner(t.TempDir(), &mockRunner{portAvail: true})
+	o.ApplyRuntimeConfig(&config.RuntimeConfig{
+		AttachEnabled:      true,
+		AttachAllowHosts:   []string{"*"},
+		AttachAllowSchemes: []string{"http", "ws"},
+	})
+
+	if err := o.validateAttachURL("http://192.168.1.100:9868"); err != nil {
+		t.Fatalf("wildcard host should allow any host, got: %v", err)
+	}
+	if err := o.validateAttachURL("http://bridge-container:9868"); err != nil {
+		t.Fatalf("wildcard host should allow hostname, got: %v", err)
 	}
 }
 

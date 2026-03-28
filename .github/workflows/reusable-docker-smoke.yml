@@ -1,4 +1,4 @@
-name: Reusable Docker Smoke Test
+name: Reusable / Docker Smoke
 
 on:
   workflow_call:
@@ -7,8 +7,6 @@ on:
         required: true
         type: string
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 permissions:
   contents: read
@@ -19,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.ref }}
 
@@ -30,3 +28,6 @@ jobs:
 
       - name: Verify bootstrap path in container
         run: bash scripts/docker-smoke.sh pinchtab-release-smoke:${{ github.run_id }}
+
+      - name: Verify MCP stdio in container
+        run: bash scripts/docker-mcp-smoke.sh pinchtab-release-smoke:${{ github.run_id }}

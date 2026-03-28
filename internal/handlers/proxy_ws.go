@@ -10,14 +10,18 @@ import (
 	"net/http"
 	"net/textproto"
 	"net/url"
+
+	internalurls "github.com/pinchtab/pinchtab/internal/urls"
 )
+
+const proxyWSBackendAuthorizationHeader = "X-Pinchtab-Proxy-Authorization"
 
 // ProxyWebSocket tunnels WebSocket connections with proper HTTP headers
 func ProxyWebSocket(w http.ResponseWriter, r *http.Request, targetURL string) {
 	parsed, err := url.Parse(targetURL)
 	if err != nil {
 		http.Error(w, "invalid backend target", http.StatusBadGateway)
-		slog.Error("ws proxy: invalid target", "target", targetURL, "err", err)
+		slog.Error("ws proxy: invalid target", "target", internalurls.RedactForLog(targetURL), "err", err)
 		return
 	}
 
@@ -58,7 +62,7 @@ func ProxyWebSocket(w http.ResponseWriter, r *http.Request, targetURL string) {
 	_, _ = fmt.Fprintf(writer, "%s %s HTTP/1.1\r\n", r.Method, path)
 	_, _ = fmt.Fprintf(writer, "Host: %s\r\n", host)
 
-	for name, values := range r.Header {
+	for name, values := range filterProxyWSHeaders(r.Header) {
 		canonicalName := textproto.CanonicalMIMEHeaderKey(name)
 		for _, value := range values {
 			_, _ = fmt.Fprintf(writer, "%s: %s\r\n", canonicalName, value)
@@ -83,4 +87,41 @@ func ProxyWebSocket(w http.ResponseWriter, r *http.Request, targetURL string) {
 	}()
 
 	<-done
+}
+
+func filterProxyWSHeaders(headers http.Header) http.Header {
+	filtered := make(http.Header)
+	for name, values := range headers {
+		if textproto.CanonicalMIMEHeaderKey(name) == proxyWSBackendAuthorizationHeader {
+			copied := append([]string(nil), values...)
+			filtered["Authorization"] = copied
+			continue
+		}
+		if !allowProxyWSHeader(name) {
+			continue
+		}
+		copied := append([]string(nil), values...)
+		filtered[textproto.CanonicalMIMEHeaderKey(name)] = copied
+	}
+	return filtered
+}
+
+func allowProxyWSHeader(name string) bool {
+	canonical := textproto.CanonicalMIMEHeaderKey(name)
+	if canonical == "Connection" || canonical == "Upgrade" || canonical == "Origin" || canonical == "User-Agent" {
+		return true
+	}
+	return canonical == "Sec-Websocket-Key" || canonical == "Sec-Websocket-Version" || canonical == "Sec-Websocket-Protocol" || canonical == "Sec-Websocket-Extensions"
+}
+
+func SetProxyWSBackendAuthorization(headers http.Header, value string) {
+	if headers == nil {
+		return
+	}
+	value = textproto.TrimString(value)
+	if value == "" {
+		headers.Del(proxyWSBackendAuthorizationHeader)
+		return
+	}
+	headers.Set(proxyWSBackendAuthorizationHeader, value)
 }

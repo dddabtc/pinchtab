@@ -116,6 +116,14 @@ Verify:
 golangci-lint --version
 ```
 
+### Install gotestsum (Recommended)
+
+Recommended for the cleaner local unit test output used by `./dev test unit`:
+
+```bash
+go install gotest.tools/gotestsum@latest
+```
+
 ### Install Chrome/Chromium
 
 **macOS (Homebrew):**
@@ -240,6 +248,9 @@ go test ./... -v -coverprofile=coverage.out
 go tool cover -html=coverage.out           # View coverage
 ./dev e2e                                 # Run the default E2E release suite
 ./dev e2e docker                          # Build the local image and run Docker smoke
+./dev e2e pr                              # Run API fast + CLI fast
+./dev e2e api-full                        # Run the multi-instance API suite
+./dev e2e cli-full                        # Run the single-instance CLI full suite
 ```
 
 ### Developer Toolkit (`dev`)
@@ -268,15 +279,13 @@ All dev scripts are accessible through `./dev`:
 | `test` | Run all tests |
 | `test unit` | Unit tests only |
 | `test dashboard` | Dashboard tests only |
-| `e2e` | Run the default E2E release suite |
+| `e2e` | Run the default E2E release suite (`api-full` + `cli-full`) |
 | `e2e docker` | Build the local image and run the Docker smoke test |
-| `e2e pr` | Run the PR E2E suite |
-| `e2e recent` | Run the recent E2E suite |
-| `e2e api-fast` | Run the fast API E2E suite |
-| `e2e cli-fast` | Run the fast CLI E2E suite |
-| `e2e full-api` | Run the full API E2E suite |
-| `e2e full-cli` | Run the full CLI E2E suite |
-| `e2e full-extended` | Run the extended E2E suite |
+| `e2e pr` | Run the PR E2E suite (`api-fast` + `cli-fast`) |
+| `e2e api-fast` | Run the fast API E2E suite on the single-instance stack |
+| `e2e cli-fast` | Run the fast CLI E2E suite on the single-instance stack |
+| `e2e api-full` | Run the full API E2E suite on the multi-instance stack |
+| `e2e cli-full` | Run the full CLI E2E suite on the single-instance stack |
 | `e2e release` | Run the release E2E meta-suite |
 | `build` | Build the application |
 | `dev` | Build and run the application |
@@ -341,14 +350,37 @@ git push origin feat/my-feature
 
 ## Continuous Integration
 
-GitHub Actions automatically runs on push:
-- Format checks (gofmt)
-- Vet checks (go vet)
-- Build verification
-- Full test suite with coverage
-- Linting (golangci-lint)
+Workflows follow a naming convention:
 
-See `.github/workflows/` for details.
+| Prefix | Purpose | Example |
+|--------|---------|---------|
+| `ci-*` | Automatic checks on PR/push | `ci-go.yml` → **CI / Go** |
+| `reusable-*` | Building blocks (`workflow_call` only) | `reusable-e2e.yml` → **Reusable / E2E** |
+| `release-*` | Release pipeline | `release.yml` → **Release** |
+
+### CI Checks
+
+Run automatically on pull requests and/or push to `main`:
+
+| Workflow | Triggers | What it checks |
+|----------|----------|----------------|
+| **CI / Go** | PR + push | gofmt, vet, build, tests, coverage, lint, security |
+| **CI / Dashboard** | PR + push (dashboard paths) | TypeScript, ESLint, Prettier, tests, build |
+| **CI / Docs** | PR + push (docs paths) | docs.json reference validation |
+| **CI / npm** | PR (npm paths) + tag push | npm package verification |
+| **CI / E2E** | PR (fast suites) + manual (full suites) | Docker-based end-to-end tests |
+| **CI / Branch Naming** | PR | Branch name convention enforcement |
+
+### Release Pipeline
+
+| Workflow | Trigger | What it does |
+|----------|---------|--------------|
+| **Release** | Manual | Runs all checks + E2E → manual approval gate → creates tag → publishes binaries, npm, Docker, and skill |
+| **Release / Manual Publish** | Manual | Publishes an existing tag as a recovery path |
+
+In **Release**, E2E and Docker smoke failures are non-blocking — they surface
+in the approval summary so you can decide whether to proceed. Core checks (Go, Dashboard,
+Docs, npm, publish dry-run) must pass for the approval gate to appear.
 
 ---
 

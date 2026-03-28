@@ -5,7 +5,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/chromedp/cdproto/target"
 	"github.com/pinchtab/pinchtab/internal/config"
 )
 
@@ -77,7 +79,7 @@ func TestTabManagerRemoteAllocatorInitialization(t *testing.T) {
 
 	// Use context.TODO() instead of nil to avoid lint warnings
 	ctx := context.TODO()
-	tm := NewTabManager(ctx, cfg, nil, nil)
+	tm := NewTabManager(ctx, cfg, nil, nil, nil)
 	if tm == nil {
 		t.Error("TabManager should be created")
 	}
@@ -91,7 +93,7 @@ func TestTabManagerRemoteAllocatorInitialization(t *testing.T) {
 
 func TestTabContext_RejectsUnknownTabID(t *testing.T) {
 	// TabContext should reject tab IDs that aren't tracked
-	tm := NewTabManager(context.Background(), &config.RuntimeConfig{}, nil, nil)
+	tm := NewTabManager(context.Background(), &config.RuntimeConfig{}, nil, nil, nil)
 
 	// Try to get context for a non-existent tab
 	_, _, err := tm.TabContext("tab_nonexistent")
@@ -103,23 +105,29 @@ func TestTabContext_RejectsUnknownTabID(t *testing.T) {
 	}
 }
 
-func TestTabContext_RejectsRawCDPID(t *testing.T) {
-	// TabContext should reject raw CDP target IDs (32-char hex)
-	// These should never be accepted - only hash-format IDs work
-	tm := NewTabManager(context.Background(), &config.RuntimeConfig{}, nil, nil)
+func TestTabContext_RejectsUnknownRawCDPID(t *testing.T) {
+	tm := NewTabManager(context.Background(), &config.RuntimeConfig{}, nil, nil, nil)
 
-	// Simulate a raw CDP target ID format
 	rawCDPID := "A25658CE1BA82659EBE9C93C46CEE63A"
 
 	_, _, err := tm.TabContext(rawCDPID)
 	if err == nil {
-		t.Error("TabContext should reject raw CDP target IDs")
+		t.Error("TabContext should reject unknown raw CDP target IDs")
+	}
+}
+
+func TestQuietStealthObservers(t *testing.T) {
+	if (&Bridge{Config: &config.RuntimeConfig{StealthLevel: "full"}}).quietStealthObservers() != true {
+		t.Fatal("expected full stealth to suppress nonessential observers")
+	}
+	if (&Bridge{Config: &config.RuntimeConfig{StealthLevel: "medium"}}).quietStealthObservers() {
+		t.Fatal("did not expect medium stealth to suppress observers")
 	}
 }
 
 func TestCreateTab_ReturnsRawCDPID(t *testing.T) {
 	// Verify TabIDFromCDPTarget returns raw CDP ID (no prefix)
-	tm := NewTabManager(context.Background(), &config.RuntimeConfig{}, nil, nil)
+	tm := NewTabManager(context.Background(), &config.RuntimeConfig{}, nil, nil, nil)
 
 	if tm.idMgr == nil {
 		t.Error("TabManager should have idMgr initialized")
@@ -134,7 +142,7 @@ func TestCreateTab_ReturnsRawCDPID(t *testing.T) {
 }
 
 func TestTabContext_AcceptsRegisteredID(t *testing.T) {
-	tm := NewTabManager(context.Background(), &config.RuntimeConfig{}, nil, nil)
+	tm := NewTabManager(context.Background(), &config.RuntimeConfig{}, nil, nil, nil)
 
 	rawCDPID := "RAWCDPID123456789012345678901234"
 	ctx := context.Background()
@@ -157,7 +165,7 @@ func TestTabContext_AcceptsRegisteredID(t *testing.T) {
 }
 
 func TestTabContext_EmptyID_UsesCurrentTrackedTab(t *testing.T) {
-	tm := NewTabManager(context.Background(), &config.RuntimeConfig{}, nil, nil)
+	tm := NewTabManager(context.Background(), &config.RuntimeConfig{}, nil, nil, nil)
 
 	ctx := context.Background()
 	tabID := "SOMECDPID"
@@ -182,7 +190,7 @@ func TestTabContext_EmptyID_UsesCurrentTrackedTab(t *testing.T) {
 func TestCloseTab_PreventsLastTabClose(t *testing.T) {
 	// CloseTab should fail when attempting to close the last remaining tab
 	// This prevents Chrome from exiting and crashing the server
-	tm := NewTabManager(context.Background(), &config.RuntimeConfig{}, nil, nil)
+	tm := NewTabManager(context.Background(), &config.RuntimeConfig{}, nil, nil, nil)
 
 	// Without a valid browser context, ListTargets will fail
 	// which triggers the guard at the start of CloseTab
@@ -194,5 +202,111 @@ func TestCloseTab_PreventsLastTabClose(t *testing.T) {
 	// The error should mention listing targets
 	if err != nil && !strings.Contains(err.Error(), "list targets") {
 		t.Errorf("expected error about list targets, got: %s", err.Error())
+	}
+}
+
+func TestShouldBlockPopupTarget(t *testing.T) {
+	tests := []struct {
+		name string
+		info *target.Info
+		want bool
+	}{
+		{name: "nil target", info: nil, want: false},
+		{name: "top level page", info: &target.Info{Type: TargetTypePage}, want: false},
+		{name: "non-page target with opener", info: &target.Info{Type: "service_worker", OpenerID: target.ID("opener")}, want: false},
+		{name: "page popup", info: &target.Info{Type: TargetTypePage, OpenerID: target.ID("opener")}, want: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := shouldBlockPopupTarget(tc.info); got != tc.want {
+				t.Fatalf("shouldBlockPopupTarget(%+v) = %v, want %v", tc.info, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestEvaluateTabPolicy(t *testing.T) {
+	cfg := config.IDPIConfig{
+		Enabled:        true,
+		AllowedDomains: []string{"example.com"},
+		StrictMode:     true,
+	}
+
+	allowed := EvaluateTabPolicy("https://example.com/path", cfg)
+	if allowed.Threat || allowed.Blocked {
+		t.Fatalf("expected allowed domain to pass, got %+v", allowed)
+	}
+
+	blocked := EvaluateTabPolicy("https://evil.example.net/path", cfg)
+	if !blocked.Threat || !blocked.Blocked {
+		t.Fatalf("expected blocked domain to fail, got %+v", blocked)
+	}
+	if blocked.CurrentURL == "" || blocked.UpdatedAt.IsZero() {
+		t.Fatalf("expected policy state metadata to be populated, got %+v", blocked)
+	}
+}
+
+func TestTabManagerStoresTabPolicyState(t *testing.T) {
+	tm := NewTabManager(context.Background(), &config.RuntimeConfig{}, nil, nil, nil)
+	tm.tabs["tab1"] = &TabEntry{Ctx: context.Background()}
+
+	state := TabPolicyState{
+		CurrentURL: "https://evil.example.net/path",
+		Threat:     true,
+		Blocked:    true,
+		Reason:     "blocked",
+		UpdatedAt:  time.Now(),
+	}
+	tm.SetTabPolicyState("tab1", state)
+
+	got, ok := tm.GetTabPolicyState("tab1")
+	if !ok {
+		t.Fatal("expected stored policy state")
+	}
+	if got.CurrentURL != state.CurrentURL || got.Blocked != state.Blocked || got.Reason != state.Reason {
+		t.Fatalf("stored policy state mismatch: got %+v want %+v", got, state)
+	}
+}
+
+func TestPurgeTrackedTabStateByTargetID(t *testing.T) {
+	logStore := NewConsoleLogStore(10)
+	tm := NewTabManager(context.Background(), &config.RuntimeConfig{}, nil, logStore, nil)
+	dm := NewDialogManager()
+	tm.SetDialogManager(dm)
+
+	tabID := "public-tab-id"
+	cdpID := "RAWCDPID123"
+	tm.tabs[tabID] = &TabEntry{Ctx: context.Background(), CDPID: cdpID}
+	tm.snapshots[tabID] = &RefCache{Refs: map[string]int64{"e0": 1}}
+	tm.accessed[tabID] = true
+	tm.currentTab = tabID
+	dm.SetPending(tabID, &DialogState{Type: "alert", Message: "secret"})
+	logStore.AddConsoleLog(cdpID, LogEntry{Level: "log", Message: "secret"})
+	logStore.AddErrorLog(cdpID, ErrorEntry{Message: "secret"})
+
+	if ok := tm.purgeTrackedTabStateByTargetID(cdpID); !ok {
+		t.Fatal("expected tab cleanup to succeed")
+	}
+	if _, ok := tm.tabs[tabID]; ok {
+		t.Fatal("expected tracked tab to be removed")
+	}
+	if _, ok := tm.snapshots[tabID]; ok {
+		t.Fatal("expected snapshot cache to be removed")
+	}
+	if tm.accessed[tabID] {
+		t.Fatal("expected accessed entry to be removed")
+	}
+	if tm.currentTab != "" {
+		t.Fatalf("expected current tab to be cleared, got %q", tm.currentTab)
+	}
+	if dm.GetPending(tabID) != nil {
+		t.Fatal("expected pending dialog to be cleared")
+	}
+	if logs := logStore.GetConsoleLogs(cdpID, 0); logs != nil {
+		t.Fatalf("expected console logs to be removed, got %v", logs)
+	}
+	if errs := logStore.GetErrorLogs(cdpID, 0); errs != nil {
+		t.Fatalf("expected error logs to be removed, got %v", errs)
 	}
 }

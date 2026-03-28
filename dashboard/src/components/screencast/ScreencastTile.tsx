@@ -1,6 +1,9 @@
-import { useEffect, useRef, useState } from "react";
-import { addTokenToUrl } from "../../services/auth";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { sameOriginUrl } from "../../services/auth";
 import * as api from "../../services/api";
+import ScreencastStatusBar, {
+  type ScreencastStatus,
+} from "./ScreencastStatusBar";
 
 interface Props {
   instanceId: string;
@@ -13,32 +16,178 @@ interface Props {
   showTitle?: boolean;
 }
 
-type Status = "connecting" | "streaming" | "error";
+function loadImageElement(blob: Blob): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const imgUrl = URL.createObjectURL(blob);
+    const img = new Image();
+
+    img.onload = () => {
+      URL.revokeObjectURL(imgUrl);
+      resolve(img);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(imgUrl);
+      reject(new Error("Failed to decode screencast frame"));
+    };
+
+    img.src = imgUrl;
+  });
+}
+
+async function drawFrameToCanvas(
+  canvas: HTMLCanvasElement,
+  ctx: CanvasRenderingContext2D,
+  frameData: ArrayBuffer | Blob,
+): Promise<void> {
+  const blob =
+    frameData instanceof Blob
+      ? frameData
+      : new Blob([frameData], { type: "image/jpeg" });
+
+  if (typeof window.createImageBitmap === "function") {
+    const bitmap = await window.createImageBitmap(blob);
+    try {
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      ctx.drawImage(bitmap, 0, 0);
+      return;
+    } finally {
+      bitmap.close();
+    }
+  }
+
+  const image = await loadImageElement(blob);
+  canvas.width = image.width;
+  canvas.height = image.height;
+  ctx.drawImage(image, 0, 0);
+}
 
 export default function ScreencastTile({
   instanceId,
   tabId,
   label,
   url,
-  quality = 30,
+  quality = 40,
   maxWidth = 800,
   fps = 1,
   showTitle = true,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const socketRef = useRef<WebSocket | null>(null);
-  const [status, setStatus] = useState<Status>("connecting");
+  const [status, setStatus] = useState<ScreencastStatus>("connecting");
   const [fpsDisplay, setFpsDisplay] = useState("—");
   const [sizeDisplay, setSizeDisplay] = useState("—");
   const [localFps, setLocalFps] = useState(fps);
-  const [isCapturing, setIsCapturing] = useState(false);
-  const [isPdfGenerating, setIsPdfGenerating] = useState(false);
+  const [hasFrame, setHasFrame] = useState(false);
   const [fallbackUrl, setFallbackUrl] = useState<string | null>(null);
+  const [retryKey, setRetryKey] = useState(0);
+
+  // ── Interactive click & scroll on the screencast canvas ──
+
+  const getPageCoords = useCallback(
+    (e: React.MouseEvent<HTMLCanvasElement>) => {
+      const canvas = canvasRef.current;
+      if (!canvas) return null;
+      const rect = canvas.getBoundingClientRect();
+      // canvas.width/height = actual CDP viewport pixels
+      // rect.width/height = CSS display size
+      return {
+        x: ((e.clientX - rect.left) / rect.width) * canvas.width,
+        y: ((e.clientY - rect.top) / rect.height) * canvas.height,
+      };
+    },
+    [],
+  );
+
+  const handleCanvasClick = useCallback(
+    async (e: React.MouseEvent<HTMLCanvasElement>) => {
+      if (status !== "streaming") return;
+      const coords = getPageCoords(e);
+      if (!coords) return;
+      try {
+        await api.sendAction({
+          kind: "click",
+          tabId,
+          x: Math.round(coords.x),
+          y: Math.round(coords.y),
+          hasXY: true,
+        });
+      } catch (err) {
+        console.error("click failed", err);
+      }
+    },
+    [status, tabId, getPageCoords],
+  );
+
+  const handleCanvasWheel = useCallback(
+    async (e: React.WheelEvent<HTMLCanvasElement>) => {
+      if (status !== "streaming") return;
+      const coords = getPageCoords(e);
+      if (!coords) return;
+      try {
+        await api.sendAction({
+          kind: "scroll",
+          tabId,
+          x: Math.round(coords.x),
+          y: Math.round(coords.y),
+          scrollY: Math.round(e.deltaY),
+        });
+      } catch (err) {
+        console.error("scroll failed", err);
+      }
+    },
+    [status, tabId, getPageCoords],
+  );
+
+  const handleKeyDown = useCallback(
+    async (e: React.KeyboardEvent<HTMLCanvasElement>) => {
+      if (status !== "streaming") return;
+      if ((e.ctrlKey || e.metaKey) && e.key === "v") {
+        e.preventDefault();
+        navigator.clipboard
+          .readText()
+          .then((text) => {
+            if (text) {
+              api
+                .sendAction({ kind: "keyboard-inserttext", tabId, text })
+                .catch(() => {});
+            }
+          })
+          .catch(() => {});
+        return;
+      }
+      e.preventDefault();
+      try {
+        if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+          await api.sendAction({
+            kind: "keyboard-inserttext",
+            tabId,
+            text: e.key,
+          });
+        } else {
+          await api.sendAction({ kind: "press", tabId, key: e.key });
+        }
+      } catch (err) {
+        console.error("key input failed", err);
+      }
+    },
+    [status, tabId],
+  );
+
+  // Prevent default wheel behavior on the canvas so the page doesn't scroll
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const prevent = (e: WheelEvent) => e.preventDefault();
+    canvas.addEventListener("wheel", prevent, { passive: false });
+    return () => canvas.removeEventListener("wheel", prevent);
+  }, []);
 
   // Reset local FPS when the tab changes to match the new tab's initial request
   useEffect(() => {
     setLocalFps(fps);
     setStatus("connecting");
+    setHasFrame(false);
     setFallbackUrl(null);
   }, [tabId, fps]);
 
@@ -51,57 +200,20 @@ export default function ScreencastTile({
     };
   }, [fallbackUrl]);
 
-  const takeScreenshot = async () => {
-    if (isCapturing) return;
-    setIsCapturing(true);
-
+  const captureFallback = useCallback(async () => {
     try {
       const blob = await api.fetchTabScreenshot(tabId, "png");
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `screenshot-${tabId}-${Date.now()}.png`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-    } catch (e) {
-      console.error("Screenshot capture failed", e);
-    } finally {
-      setIsCapturing(false);
-    }
-  };
-
-  const downloadPdf = async () => {
-    if (isPdfGenerating) return;
-    setIsPdfGenerating(true);
-
-    try {
-      const blob = await api.fetchTabPdf(tabId);
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `page-${tabId}-${Date.now()}.pdf`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-    } catch (e) {
-      console.error("PDF generation failed", e);
-    } finally {
-      setIsPdfGenerating(false);
-    }
-  };
-
-  const captureFallback = async () => {
-    try {
-      const blob = await api.fetchTabScreenshot(tabId, "png");
-      if (fallbackUrl) URL.revokeObjectURL(fallbackUrl);
-      setFallbackUrl(URL.createObjectURL(blob));
+      const nextUrl = URL.createObjectURL(blob);
+      setFallbackUrl((prev) => {
+        if (prev) {
+          URL.revokeObjectURL(prev);
+        }
+        return nextUrl;
+      });
     } catch (e) {
       console.error("Fallback capture failed", e);
     }
-  };
+  }, [tabId]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -116,7 +228,7 @@ export default function ScreencastTile({
       maxWidth: String(maxWidth),
       fps: String(localFps),
     });
-    const path = addTokenToUrl(
+    const path = sameOriginUrl(
       `/instances/${encodeURIComponent(instanceId)}/proxy/screencast?${params.toString()}`,
     );
     const wsUrl = new URL(path, window.location.origin);
@@ -125,49 +237,101 @@ export default function ScreencastTile({
     const socket = new WebSocket(wsUrl.toString());
     socket.binaryType = "arraybuffer";
     socketRef.current = socket;
+    setStatus("connecting");
+    setHasFrame(false);
+
+    let disposed = false;
+    let hasRenderedFrame = false;
+    let pendingFrame: ArrayBuffer | Blob | null = null;
+    let renderInFlight = false;
 
     let frameCount = 0;
     let lastFpsTime = Date.now();
+    const fallbackTimer = window.setTimeout(() => {
+      if (!disposed && !hasRenderedFrame) {
+        void captureFallback();
+      }
+    }, 1500);
+
+    const renderNextFrame = async () => {
+      if (disposed || renderInFlight || !pendingFrame) return;
+
+      renderInFlight = true;
+      const frameData = pendingFrame;
+      pendingFrame = null;
+
+      try {
+        await drawFrameToCanvas(canvas, ctx, frameData);
+        if (disposed) return;
+
+        hasRenderedFrame = true;
+        window.clearTimeout(fallbackTimer);
+        setHasFrame(true);
+        setStatus("streaming");
+      } catch (err) {
+        if (!disposed) {
+          console.error("screencast frame render failed", err);
+        }
+      } finally {
+        renderInFlight = false;
+        if (!disposed && pendingFrame) {
+          void renderNextFrame();
+        }
+      }
+    };
 
     socket.onopen = () => {
-      setStatus("streaming");
+      if (!disposed) {
+        setStatus("connecting");
+      }
     };
 
     socket.onmessage = (evt) => {
-      const blob = new Blob([evt.data], { type: "image/jpeg" });
-      const imgUrl = URL.createObjectURL(blob);
-      const img = new Image();
-      img.onload = () => {
-        canvas.width = img.width;
-        canvas.height = img.height;
-        ctx.drawImage(img, 0, 0);
-        URL.revokeObjectURL(imgUrl);
-      };
-      img.src = imgUrl;
+      if (disposed) return;
+      pendingFrame = evt.data;
+      void renderNextFrame();
 
       frameCount++;
       const now = Date.now();
       if (now - lastFpsTime >= 1000) {
         setFpsDisplay(`${frameCount} fps`);
-        setSizeDisplay(`${(evt.data.byteLength / 1024).toFixed(0)} KB/frame`);
+        const frameBytes =
+          evt.data instanceof Blob ? evt.data.size : evt.data.byteLength;
+        setSizeDisplay(`${(frameBytes / 1024).toFixed(0)} KB/frame`);
         frameCount = 0;
         lastFpsTime = now;
       }
     };
 
     socket.onerror = () => {
-      setStatus("error");
+      if (!disposed) {
+        setStatus("error");
+        void api.handleRealtimeAuthFailure();
+      }
     };
 
     socket.onclose = () => {
-      setStatus("error");
+      if (!disposed) {
+        setStatus("error");
+        void api.handleRealtimeAuthFailure();
+      }
     };
 
     return () => {
+      disposed = true;
+      window.clearTimeout(fallbackTimer);
       socket.close();
       socketRef.current = null;
     };
-  }, [instanceId, tabId, quality, maxWidth, localFps]);
+  }, [
+    instanceId,
+    tabId,
+    quality,
+    maxWidth,
+    localFps,
+    retryKey,
+    captureFallback,
+  ]);
 
   const statusColor =
     status === "streaming"
@@ -176,7 +340,7 @@ export default function ScreencastTile({
         ? "bg-warning"
         : "bg-destructive";
   return (
-    <div className="flex h-full flex-col overflow-hidden rounded-lg border border-border-subtle bg-bg-elevated">
+    <div className="flex h-full flex-col overflow-hidden border border-border-subtle bg-bg-elevated">
       {/* Header */}
       {showTitle && (
         <div className="flex shrink-0 items-center justify-between border-b border-border-subtle px-3 py-2">
@@ -193,7 +357,7 @@ export default function ScreencastTile({
       )}
       {/* Canvas */}
       <div className="relative flex min-h-0 flex-1 items-center justify-center bg-black">
-        {status === "error" && fallbackUrl ? (
+        {!hasFrame && fallbackUrl ? (
           <img
             src={fallbackUrl}
             alt="Tab preview"
@@ -202,9 +366,13 @@ export default function ScreencastTile({
         ) : (
           <canvas
             ref={canvasRef}
-            className="max-h-full max-w-full object-contain"
+            className="max-h-full max-w-full cursor-pointer object-contain"
+            tabIndex={0}
             width={800}
             height={600}
+            onClick={handleCanvasClick}
+            onWheel={handleCanvasWheel}
+            onKeyDown={handleKeyDown}
           />
         )}
 
@@ -223,7 +391,11 @@ export default function ScreencastTile({
                 </button>
               )}
               <button
-                onClick={() => setStatus("connecting")}
+                onClick={() => {
+                  setStatus("connecting");
+                  setHasFrame(false);
+                  setRetryKey((prev) => prev + 1);
+                }}
                 className="rounded bg-primary/30 px-3 py-1.5 font-medium text-white shadow-lg backdrop-blur-md transition-colors hover:bg-primary/40"
               >
                 Retry connection
@@ -232,60 +404,14 @@ export default function ScreencastTile({
           </div>
         )}
       </div>
-      <div className="flex shrink-0 items-center justify-between border-t border-border-subtle px-3 py-1 text-xs text-text-muted">
-        <div className="flex items-center gap-3">
-          <div className="flex items-center overflow-hidden rounded border border-border-subtle bg-black/20">
-            <button
-              onClick={() => setLocalFps((prev) => Math.max(1, prev - 1))}
-              className="flex h-5 w-5 items-center justify-center hover:bg-white/5 active:bg-white/10"
-              title="Decrease FPS"
-            >
-              -
-            </button>
-            <div className="min-w-16 px-1.5 text-center font-mono text-[10px] text-text-secondary">
-              {localFps} FPS ({fpsDisplay})
-            </div>
-            <button
-              onClick={() => setLocalFps((prev) => Math.min(30, prev + 1))}
-              className="flex h-5 w-5 items-center justify-center hover:bg-white/5 active:bg-white/10"
-              title="Increase FPS"
-            >
-              +
-            </button>
-          </div>
-
-          <button
-            onClick={takeScreenshot}
-            disabled={isCapturing || status !== "streaming"}
-            className={`flex h-6 w-6 items-center justify-center rounded-md border border-border-subtle transition-colors hover:bg-white/5 disabled:opacity-50 ${
-              isCapturing ? "bg-primary/20" : "bg-black/20"
-            }`}
-            title="Take full quality screenshot (PNG)"
-          >
-            {isCapturing ? (
-              <span className="animate-pulse">⌛</span>
-            ) : (
-              <span>📸</span>
-            )}
-          </button>
-
-          <button
-            onClick={downloadPdf}
-            disabled={isPdfGenerating || status !== "streaming"}
-            className={`flex h-6 w-6 items-center justify-center rounded-md border border-border-subtle transition-colors hover:bg-white/5 disabled:opacity-50 ${
-              isPdfGenerating ? "bg-primary/20" : "bg-black/20"
-            }`}
-            title="Download as PDF"
-          >
-            {isPdfGenerating ? (
-              <span className="animate-pulse">⌛</span>
-            ) : (
-              <span>📄</span>
-            )}
-          </button>
-        </div>
-        <span>{sizeDisplay}</span>
-      </div>
+      <ScreencastStatusBar
+        tabId={tabId}
+        status={status}
+        localFps={localFps}
+        setLocalFps={setLocalFps}
+        fpsDisplay={fpsDisplay}
+        sizeDisplay={sizeDisplay}
+      />
     </div>
   );
 }

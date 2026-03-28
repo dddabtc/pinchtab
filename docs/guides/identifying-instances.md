@@ -16,20 +16,23 @@ cp "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" /usr/local/bin
 chmod +x /usr/local/bin/pinchtab-chrome
 
 # Set in config.json
-pinchtab config set browser.chromeBinary /usr/local/bin/pinchtab-chrome
-pinchtab
+pinchtab config set browser.binary /usr/local/bin/pinchtab-chrome
+pinchtab server
 ```
 
 Now a process listing such as `ps -axo pid,command | rg pinchtab-chrome` gives you a quick way to spot the browser PinchTab launches.
 
 ## 2. Add Recognizable Chrome Flags
 
-Extra Chrome flags are configured through `browser.extraFlags` in `config.json`:
+Use `instanceDefaults.userAgent` for a visible process marker, and reserve `browser.extraFlags` for safe non-security-reducing flags:
 
 ```json
 {
+  "instanceDefaults": {
+    "userAgent": "PinchTab-Automation/1.0"
+  },
   "browser": {
-    "extraFlags": "--user-agent=PinchTab-Automation/1.0 --disable-dev-shm-usage"
+    "extraFlags": "--ash-no-nudges --disable-focus-on-load"
   }
 }
 ```
@@ -41,6 +44,8 @@ ps -axo pid,command | rg 'PinchTab-Automation|user-data-dir'
 ```
 
 Use this when you want to differentiate roles such as “scraper”, “monitor”, or “debug”.
+
+Do not put security-reducing or PinchTab-owned flags in `browser.extraFlags`. For example, `--user-agent=...`, `--no-sandbox`, and stealth/runtime-owned flags are rejected.
 
 ## 3. Use Profile Paths As An Identifier
 
@@ -73,14 +78,14 @@ curl http://localhost:9867/instances
 
 For most setups, this combination is enough:
 
-1. point PinchTab to a renamed Chrome binary via `browser.chromeBinary` in config
-2. add a recognizable `browser.extraFlags` marker in config
+1. point PinchTab to a renamed Chrome binary via `browser.binary` in config
+2. add a recognizable `instanceDefaults.userAgent` marker or a safe `browser.extraFlags` marker in config
 3. verify the profile path or instance ID in the dashboard
 
 ## Docker
 
 The same approach works in containers:
 
-- set `browser.chromeBinary` in config if you need to override the bundled browser path
-- put identifying flags in `browser.extraFlags`
+- set `browser.binary` in config if you need to override the bundled browser path
+- put only safe identifying flags in `browser.extraFlags`
 - inspect the instance list from the API or dashboard rather than relying only on process names inside the container

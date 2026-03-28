@@ -171,9 +171,9 @@ func TestValidateFileConfig_InvalidStealthLevel(t *testing.T) {
 		wantErr bool
 	}{
 		{"light", false},
+		{"medium", false},
 		{"full", false},
-		{"", false},      // empty is ok
-		{"medium", true}, // removed, no longer valid
+		{"", false}, // empty is ok
 		{"none", true},
 		{"max", true},
 		{"LIGHT", true}, // case sensitive
@@ -342,6 +342,36 @@ func TestValidateFileConfig_InvalidTimeouts(t *testing.T) {
 	}
 }
 
+func TestValidateFileConfig_InvalidActivityRetentionDays(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   *int
+		wantErr bool
+	}{
+		{name: "nil", value: nil, wantErr: false},
+		{name: "positive", value: intPtr(30), wantErr: false},
+		{name: "zero", value: intPtr(0), wantErr: true},
+		{name: "negative", value: intPtr(-1), wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fc := &FileConfig{
+				Observability: ObservabilityFileConfig{
+					Activity: ActivityFileConfig{
+						RetentionDays: tt.value,
+					},
+				},
+			}
+			errs := ValidateFileConfig(fc)
+			hasErr := len(errs) > 0
+			if hasErr != tt.wantErr {
+				t.Fatalf("RetentionDays=%v: got error=%v, want %v (errs: %v)", tt.value, hasErr, tt.wantErr, errs)
+			}
+		})
+	}
+}
+
 func TestValidateFileConfig_InstancePortRange(t *testing.T) {
 	start := 9900
 	end := 9800 // invalid: start > end
@@ -383,6 +413,60 @@ func TestValidateFileConfig_MultipleErrors(t *testing.T) {
 	errs := ValidateFileConfig(fc)
 	if len(errs) < 5 {
 		t.Errorf("expected at least 5 errors, got %d: %v", len(errs), errs)
+	}
+}
+
+func TestValidateFileConfig_ChromeExtraFlags(t *testing.T) {
+	tests := []struct {
+		name    string
+		flags   string
+		wantErr bool
+		wantMsg string
+	}{
+		{
+			name:  "safe flags",
+			flags: "--disable-gpu --ash-no-nudges --disable-focus-on-load",
+		},
+		{
+			name:    "unsafe no sandbox",
+			flags:   "--no-sandbox",
+			wantErr: true,
+			wantMsg: "PINCHTAB_CHROME_NO_SANDBOX",
+		},
+		{
+			name:    "reserved user agent",
+			flags:   "--user-agent=PinchTab-Test/1.0",
+			wantErr: true,
+			wantMsg: "instanceDefaults.userAgent",
+		},
+		{
+			name:    "site isolation disabled",
+			flags:   "--disable-features=Translate,SitePerProcess",
+			wantErr: true,
+			wantMsg: "site isolation",
+		},
+		{
+			name:    "malformed token",
+			flags:   "disable-gpu",
+			wantErr: true,
+			wantMsg: "--name",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fc := &FileConfig{
+				Browser: BrowserConfig{ChromeExtraFlags: tt.flags},
+			}
+			errs := ValidateFileConfig(fc)
+			hasErr := len(errs) > 0
+			if hasErr != tt.wantErr {
+				t.Fatalf("ChromeExtraFlags=%q: got error=%v, want %v (errs: %v)", tt.flags, hasErr, tt.wantErr, errs)
+			}
+			if tt.wantErr && !strings.Contains(errs[0].Error(), tt.wantMsg) {
+				t.Fatalf("expected error containing %q, got %v", tt.wantMsg, errs[0])
+			}
+		})
 	}
 }
 
@@ -514,6 +598,106 @@ func TestValidateIDPIConfig_FileSchemeBlocked(t *testing.T) {
 		if len(errs) > 0 && !strings.Contains(errs[0].Error(), "file://") {
 			t.Errorf("expected file:// mention in error, got: %v", errs[0])
 		}
+	}
+}
+
+func TestValidateFileConfig_DownloadAllowedDomains(t *testing.T) {
+	tests := []struct {
+		name    string
+		domains []string
+		wantErr bool
+	}{
+		{"empty list", nil, false},
+		{"valid entries", []string{"pinchtab.com", "*.pinchtab.com"}, false},
+		{"whitespace only", []string{"   "}, true},
+		{"internal whitespace", []string{"pinchtab .com"}, true},
+		{"file scheme", []string{"file:///tmp/file.txt"}, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fc := &FileConfig{
+				Security: SecurityConfig{
+					DownloadAllowedDomains: tt.domains,
+				},
+			}
+			errs := ValidateFileConfig(fc)
+			hasErr := len(errs) > 0
+			if hasErr != tt.wantErr {
+				t.Fatalf("ValidateFileConfig(downloadAllowedDomains=%v) error=%v, want %v (errs: %v)", tt.domains, hasErr, tt.wantErr, errs)
+			}
+			if tt.wantErr && !strings.Contains(errs[0].Error(), "security.downloadAllowedDomains") {
+				t.Fatalf("expected security.downloadAllowedDomains error, got %v", errs[0])
+			}
+		})
+	}
+}
+
+func TestValidateFileConfig_TransferLimits(t *testing.T) {
+	tests := []struct {
+		name    string
+		apply   func(*SecurityConfig)
+		wantErr string
+	}{
+		{
+			name: "valid limits",
+			apply: func(s *SecurityConfig) {
+				s.DownloadMaxBytes = intPtr(DefaultDownloadMaxBytes)
+				s.UploadMaxRequestBytes = intPtr(DefaultUploadMaxRequestBytes)
+				s.UploadMaxFiles = intPtr(DefaultUploadMaxFiles)
+				s.UploadMaxFileBytes = intPtr(DefaultUploadMaxFileBytes)
+				s.UploadMaxTotalBytes = intPtr(DefaultUploadMaxTotalBytes)
+			},
+		},
+		{
+			name: "download max bytes too large",
+			apply: func(s *SecurityConfig) {
+				s.DownloadMaxBytes = intPtr(MaxDownloadMaxBytes + 1)
+			},
+			wantErr: "security.downloadMaxBytes",
+		},
+		{
+			name: "upload max files invalid",
+			apply: func(s *SecurityConfig) {
+				s.UploadMaxFiles = intPtr(0)
+			},
+			wantErr: "security.uploadMaxFiles",
+		},
+		{
+			name: "upload max file bytes too large",
+			apply: func(s *SecurityConfig) {
+				s.UploadMaxFileBytes = intPtr(MaxUploadMaxFileBytes + 1)
+			},
+			wantErr: "security.uploadMaxFileBytes",
+		},
+		{
+			name: "upload max file bytes exceeds total",
+			apply: func(s *SecurityConfig) {
+				s.UploadMaxFileBytes = intPtr(8 << 20)
+				s.UploadMaxTotalBytes = intPtr(4 << 20)
+			},
+			wantErr: "security.uploadMaxFileBytes/uploadMaxTotalBytes",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fc := &FileConfig{}
+			tt.apply(&fc.Security)
+			errs := ValidateFileConfig(fc)
+			if tt.wantErr == "" {
+				if len(errs) > 0 {
+					t.Fatalf("expected no errors, got %v", errs)
+				}
+				return
+			}
+			if len(errs) == 0 {
+				t.Fatalf("expected validation error containing %q, got none", tt.wantErr)
+			}
+			if !strings.Contains(errs[0].Error(), tt.wantErr) {
+				t.Fatalf("expected error containing %q, got %v", tt.wantErr, errs[0])
+			}
+		})
 	}
 }
 
