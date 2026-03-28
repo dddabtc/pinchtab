@@ -108,6 +108,7 @@ All tool names are prefixed with `pinchtab_`.
 | `pinchtab_network` | List recent captured network requests. Optional: `tabId`, `filter`, `method`, `status`, `type`, `limit`, `bufferSize`. |
 | `pinchtab_network_detail` | Get one request's details. Required: `requestId`. Optional: `tabId`, `body`. |
 | `pinchtab_network_clear` | Clear captured network data. Optional: `tabId`. |
+| `pinchtab_network_export` | Export captured data as HAR or NDJSON file. Optional: `tabId`, `format` (har/ndjson), `body`, `filter`, `method`, `status`, `type`, `limit`. Returns `{path, entries, format}`. |
 
 ### Dialog
 | Tool | Description |

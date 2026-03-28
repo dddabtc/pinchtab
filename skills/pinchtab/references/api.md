@@ -378,6 +378,35 @@ Returns `solved: true, attempts: 0` when no challenge is detected — safe to ca
 
 **Stealth requirement:** Solvers work best with `stealthLevel: "full"`. Cloudflare checks browser fingerprints before and after the checkbox click. Verify stealth is active with `GET /stealth/status`.
 
+## Network Export
+
+```bash
+# Export as HAR 1.2 (stream to response)
+curl /network/export?format=har
+
+# Export as NDJSON (one JSON per line)
+curl /network/export?format=ndjson
+
+# Save to server-side file
+curl "/network/export?format=har&output=file&path=session.har"
+
+# Include response bodies (10 MB cap per entry)
+curl "/network/export?format=har&body=true"
+
+# Include raw sensitive headers (Cookie, Authorization)
+curl "/network/export?format=har&redact=false"
+
+# Live streaming export (entries written to file as they arrive)
+curl -N "/network/export/stream?format=ndjson&path=live.ndjson"
+
+# Tab-scoped
+curl /tabs/TAB_ID/network/export?format=har
+```
+
+All standard network filters apply: `filter`, `method`, `status`, `type`, `limit`.
+
+Formats are pluggable. `GET /network/export?format=unknown` returns `{"available": ["har", "ndjson"]}`.
+
 ## Stealth
 
 ```bash

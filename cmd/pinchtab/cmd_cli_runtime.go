@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"net/http"
 	"os"
 	"strings"
@@ -35,7 +36,12 @@ func resolveCLIBase(cfg *config.RuntimeConfig) string {
 	if envURL := os.Getenv("PINCHTAB_SERVER"); envURL != "" {
 		return strings.TrimRight(envURL, "/")
 	}
-	return "http://127.0.0.1:9867"
+	// Default to first instance port from config, falling back to 9868.
+	port := cfg.InstancePortStart
+	if port == 0 {
+		port = 9868
+	}
+	return fmt.Sprintf("http://127.0.0.1:%d", port)
 }
 
 func resolveCLIToken(cfg *config.RuntimeConfig) string {

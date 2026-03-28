@@ -171,3 +171,4 @@ pinchtab nav <url> --block-images --timeout 60
 - **Scope snapshots.** Use `snap -s <selector>` to target a specific section of the page when you know where the element is.
 - **Prefer `fill` over `type` for framework forms.** Saves retries caused by React/Vue not detecting raw keystroke events.
 - **Check health before long workflows.** Run `pinchtab health` at the start of a multi-step task to fail fast if the server is down.
+- **Export network traces after sessions.** `pinchtab network-export -o session.har` captures every request. For live capture: `pinchtab network-export --stream -o live.har`.

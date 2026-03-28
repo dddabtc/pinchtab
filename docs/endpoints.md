@@ -229,10 +229,14 @@ POST /wait
 POST /tabs/{id}/wait
 GET  /network
 GET  /network/stream
+GET  /network/export
+GET  /network/export/stream
 GET  /network/{requestId}
 POST /network/clear
 GET  /tabs/{id}/network
 GET  /tabs/{id}/network/stream
+GET  /tabs/{id}/network/export
+GET  /tabs/{id}/network/export/stream
 GET  /tabs/{id}/network/{requestId}
 POST /dialog
 POST /tabs/{id}/dialog
@@ -259,6 +263,17 @@ Network query parameters:
 - `limit`
 - `bufferSize`
 - `body=true` on detail requests
+
+Network export query parameters:
+
+- `format` — `har` (default) or `ndjson`. Pluggable: new formats register at startup.
+- `output=file` — save to disk instead of streaming to response
+- `path` — filename when `output=file` (auto-generated if omitted, required for `/export/stream`)
+- `body=true` — include response bodies (fetched on demand, 10 MB cap per entry)
+- `redact` — `true` (default) redacts Cookie/Authorization/Set-Cookie. `false` exports raw headers.
+- all standard network filters (`filter`, `method`, `status`, `type`, `limit`)
+
+The `/export` endpoint returns the full capture as a single response. The `/export/stream` endpoint writes entries to a file as they arrive (SSE progress events sent to the caller). The streamed file is atomically renamed on completion.
 
 Dialog body fields:
 

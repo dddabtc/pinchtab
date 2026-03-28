@@ -179,7 +179,7 @@ func (s *Strategy) RegisterRoutes(mux *http.ServeMux) {
 		"GET /console", "POST /console/clear",
 		"GET /errors", "POST /errors/clear",
 		"GET /clipboard/read", "POST /clipboard/write", "POST /clipboard/copy", "GET /clipboard/paste",
-		"GET /network", "GET /network/stream", "GET /network/{requestId}", "POST /network/clear",
+		"GET /network", "GET /network/stream", "GET /network/export", "GET /network/export/stream", "GET /network/{requestId}", "POST /network/clear",
 		"POST /navigate", "POST /back", "POST /forward", "POST /reload",
 		"POST /action", "POST /actions",
 		"POST /dialog",

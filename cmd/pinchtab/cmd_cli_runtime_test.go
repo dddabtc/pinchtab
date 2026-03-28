@@ -35,8 +35,8 @@ func TestResolveCLIBase(t *testing.T) {
 			expected: "http://env:5678",
 		},
 		{
-			name:     "default fallback uses 127.0.0.1 and 9867",
-			expected: "http://127.0.0.1:9867",
+			name:     "default fallback uses 127.0.0.1 and instancePortStart",
+			expected: "http://127.0.0.1:9868",
 		},
 	}
 

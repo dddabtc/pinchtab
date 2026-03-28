@@ -51,7 +51,7 @@ browsers, manage tabs, and perform interactive tasks.`,
 			case "daemon":
 				handleDaemonCommand("")
 			case "bridge":
-				server.RunBridgeServer(loadConfig())
+				server.RunBridgeServer(loadConfig(), version)
 			case "mcp":
 				runMCP(loadConfig())
 			case "config":
@@ -111,7 +111,7 @@ func init() {
 	rootCmd.SetVersionTemplate("pinchtab {{.Version}}\n")
 
 	// Global flags
-	rootCmd.PersistentFlags().StringVar(&serverURL, "server", "", "PinchTab server URL (default: http://127.0.0.1:9867)")
+	rootCmd.PersistentFlags().StringVar(&serverURL, "server", "", "PinchTab server URL (default: http://127.0.0.1:<instancePortStart>)")
 
 	// Grouping commands
 	primaryGroup := &cobra.Group{ID: "primary", Title: "Primary Commands"}

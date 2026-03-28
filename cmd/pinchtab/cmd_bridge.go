@@ -20,7 +20,7 @@ var bridgeCmd = &cobra.Command{
 			return err
 		}
 		cfg.Engine = engineMode
-		server.RunBridgeServer(cfg)
+		server.RunBridgeServer(cfg, version)
 		return nil
 	},
 }

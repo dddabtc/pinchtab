@@ -53,6 +53,7 @@ func (s *Strategy) RegisterRoutes(mux *http.ServeMux) {
 		"POST /find",
 		"GET /solvers",
 		"POST /solve", "POST /solve/{name}",
+		"GET /network", "GET /network/stream", "GET /network/export", "GET /network/export/stream", "GET /network/{requestId}", "POST /network/clear",
 	}
 	for _, route := range shorthandRoutes {
 		mux.HandleFunc(route, s.proxyToFirst)

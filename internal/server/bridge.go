@@ -18,7 +18,7 @@ import (
 	"github.com/pinchtab/pinchtab/internal/handlers"
 )
 
-func RunBridgeServer(cfg *config.RuntimeConfig) {
+func RunBridgeServer(cfg *config.RuntimeConfig, version string) {
 	listenAddr := cfg.ListenAddr()
 	cli.PrintStartupBanner(cfg, cli.StartupBannerOptions{
 		Mode:         "bridge",
@@ -43,6 +43,7 @@ func RunBridgeServer(cfg *config.RuntimeConfig) {
 
 	mux := http.NewServeMux()
 	h := handlers.New(bridgeInstance, cfg, nil, nil, nil)
+	h.Version = version
 	configureBridgeRouter(h, cfg)
 
 	shutdownOnce := &sync.Once{}

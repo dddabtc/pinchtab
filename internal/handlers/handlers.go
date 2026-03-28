@@ -29,6 +29,7 @@ type Handlers struct {
 	Recovery     *recovery.RecoveryEngine
 	Router       *engine.Router // optional; nil ⇒ chrome-only
 	IDPIGuard    idpi.Guard
+	Version      string // build version injected at startup
 	clipboard    clipboardStore
 }
 
@@ -163,10 +164,14 @@ func (h *Handlers) RegisterRoutes(mux *http.ServeMux, doShutdown func()) {
 	mux.HandleFunc("GET /clipboard/paste", h.HandleClipboardPaste)
 	mux.HandleFunc("GET /network", h.HandleNetwork)
 	mux.HandleFunc("GET /network/stream", h.HandleNetworkStream)
+	mux.HandleFunc("GET /network/export", h.HandleNetworkExport)
+	mux.HandleFunc("GET /network/export/stream", h.HandleNetworkExportStream)
 	mux.HandleFunc("GET /network/{requestId}", h.HandleNetworkByID)
 	mux.HandleFunc("POST /network/clear", h.HandleNetworkClear)
 	mux.HandleFunc("GET /tabs/{id}/network", h.HandleTabNetwork)
 	mux.HandleFunc("GET /tabs/{id}/network/stream", h.HandleTabNetworkStream)
+	mux.HandleFunc("GET /tabs/{id}/network/export", h.HandleTabNetworkExport)
+	mux.HandleFunc("GET /tabs/{id}/network/export/stream", h.HandleTabNetworkExportStream)
 	mux.HandleFunc("GET /tabs/{id}/network/{requestId}", h.HandleTabNetworkByID)
 	mux.HandleFunc("POST /dialog", h.HandleDialog)
 	mux.HandleFunc("POST /tabs/{id}/dialog", h.HandleTabDialog)

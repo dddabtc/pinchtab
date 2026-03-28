@@ -142,6 +142,11 @@ func newDownloadRequestGuard(validator *downloadURLGuard, maxRedirects int) *dow
 }
 
 func (g *downloadRequestGuard) Validate(rawURL string, redirected bool) error {
+	// Skip validation for Chrome internal URLs (about:blank, chrome-error://, etc.)
+	// that fire during tab creation before the actual navigation begins.
+	if rawURL == "about:blank" || strings.HasPrefix(rawURL, "chrome") {
+		return nil
+	}
 	if err := g.validator.Validate(rawURL); err != nil {
 		return fmt.Errorf("unsafe browser request: %w", err)
 	}

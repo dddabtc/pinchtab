@@ -80,6 +80,8 @@ func (o *Orchestrator) registerHandlers(mux *http.ServeMux, skipLaunch bool) {
 		"POST /tabs/{id}/wait",
 		"POST /tabs/{id}/solve",
 		"POST /tabs/{id}/solve/{name}",
+		"GET /tabs/{id}/network/export",
+		"GET /tabs/{id}/network/export/stream",
 	} {
 		mux.HandleFunc(route, o.proxyTabRequest)
 	}
